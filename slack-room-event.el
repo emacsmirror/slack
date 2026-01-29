@@ -39,11 +39,12 @@
 
 (defclass slack-room-async-event () () :abstract t)
 (cl-defmethod slack-event-save-room ((_this slack-room-async-event) _room _team _cb))
-(cl-defmethod slack-event-update ((this slack-room-async-event) team)
+(cl-defmethod slack-event-update ((this slack-room-async-event) team) ;; TODO so this doesn't get picked because
   (slack-if-let* ((room (slack-event-find-room this team)))
       (slack-event-save-room this room team
                              #'(lambda ()
-                                 (slack-event-update-ui this room team)))))
+                                 (slack-event-update-ui this room team)))
+    (slack-log (format "slack-event-update: missing room for event %s" this) team :level 'error)))
 
 (defclass slack-channel-created-event (slack-room-event) ())
 
@@ -55,7 +56,7 @@
   (with-slots (payload) this
     (slack-room-create (plist-get payload :channel) 'slack-channel)))
 
-(cl-defmethod slack-event-save-room ((_this slack-channel-created-event) room team)
+(cl-defmethod slack-event-save-room ((_this slack-channel-created-event) room team _cb)
   (slack-team-set-channels team (list room)))
 
 (cl-defmethod slack-event-notify ((_this slack-channel-created-event) room team)
@@ -79,11 +80,11 @@
            (make-instance 'slack-group-archive-event
                           :payload payload)))))
 
-(cl-defmethod slack-event-save-room ((_this slack-channel-archive-event) room team)
+(cl-defmethod slack-event-save-room ((_this slack-channel-archive-event) room team _cb)
   (oset room is-archived t)
   (slack-team-set-channels team (list room)))
 
-(cl-defmethod slack-event-save-room ((_this slack-group-archive-event) room team)
+(cl-defmethod slack-event-save-room ((_this slack-group-archive-event) room team _cb)
   (oset room is-archived t)
   (slack-team-set-groups team (list room)))
 
@@ -105,11 +106,11 @@
            (make-instance 'slack-group-unarchive-event
                           :payload payload)))))
 
-(cl-defmethod slack-event-save-room ((_this slack-channel-unarchive-event) room team)
+(cl-defmethod slack-event-save-room ((_this slack-channel-unarchive-event) room team _cb)
   (oset room is-archived nil)
   (slack-team-set-channels team (list room)))
 
-(cl-defmethod slack-event-save-room ((_this slack-group-unarchive-event) room team)
+(cl-defmethod slack-event-save-room ((_this slack-group-unarchive-event) room team _cb)
   (oset room is-archived nil)
   (slack-team-set-groups team (list room)))
 
@@ -124,7 +125,7 @@
   (make-instance 'slack-channel-deleted-event
                  :payload payload))
 
-(cl-defmethod slack-event-save-room ((_this slack-channel-deleted-event) room team)
+(cl-defmethod slack-event-save-room ((_this slack-channel-deleted-event) room team _cb)
   (remhash (oref room id)
            (oref team channels)))
 
@@ -163,11 +164,11 @@
     (oset room name name)
     (oset room name-normalized name-normalized)))
 
-(cl-defmethod slack-event-save-room ((this slack-channel-rename-event) room team)
+(cl-defmethod slack-event-save-room ((this slack-channel-rename-event) room team _cb)
   (slack-event-update-name this room team)
   (slack-team-set-channels team (list room)))
 
-(cl-defmethod slack-event-save-room ((this slack-group-rename-event) room team)
+(cl-defmethod slack-event-save-room ((this slack-group-rename-event) room team _cb)
   (slack-event-update-name this room team)
   (slack-team-set-groups team (list room)))
 
@@ -245,18 +246,18 @@
     (slack-room-set-mention-count room mention-count-display team)
     (slack-room-set-has-unreads room (< 0 unread-count-display) team)))
 
-(cl-defmethod slack-event-save-room ((this slack-room-marked-event) room team)
+(cl-defmethod slack-event-save-room ((this slack-room-marked-event) room team _cb)
   (slack-event-update-room this room team))
 
-(cl-defmethod slack-event-save-room ((_this slack-channel-marked-event) room team)
+(cl-defmethod slack-event-save-room ((_this slack-channel-marked-event) room team _cb)
   (cl-call-next-method)
   (slack-team-set-channels team (list room)))
 
-(cl-defmethod slack-event-save-room ((_this slack-group-marked-event) room team)
+(cl-defmethod slack-event-save-room ((_this slack-group-marked-event) room team _cb)
   (cl-call-next-method)
   (slack-team-set-groups team (list room)))
 
-(cl-defmethod slack-event-save-room ((_this slack-im-marked-event) room team)
+(cl-defmethod slack-event-save-room ((_this slack-im-marked-event) room team _cb)
   (cl-call-next-method)
   (slack-team-set-ims team (list room)))
 
@@ -266,7 +267,7 @@
       ((buffer (slack-buffer-find 'slack-message-buffer team room)))
       (slack-buffer-update-marker-overlay buffer)))
 
-(defclass slack-im-open-event (slack-room-event slack-room-async-event) ())
+(defclass slack-im-open-event (slack-room-async-event slack-room-event) ())
 
 (defun slack-create-im-open-event (payload)
   (make-instance 'slack-im-open-event
@@ -281,7 +282,7 @@
                            'slack-im))))
 
 (cl-defmethod slack-event-save-room ((_this slack-im-open-event) room team cb)
-  (oset room is-open t)
+  (oset room properties (plist-put (oref room properties) :is_dormant nil))
   (slack-team-set-ims team (list room))
   (slack-conversations-info (oref room id) team cb))
 
@@ -291,11 +292,12 @@
                                       team))
              team :level 'info))
 
-(defclass slack-room-close-event (slack-room-event) ())
+(defclass slack-room-close-event (slack-room-async-event slack-room-event) ())
 (defclass slack-group-close-event (slack-room-close-event) ())
 (defclass slack-im-close-event (slack-room-close-event) ())
 
 (defun slack-create-room-close-event (payload)
+  (setq y payload)
   (let* ((type (plist-get payload :type))
          (klass (cond ((string= "im_close" type)
                        'slack-im-close-event)
@@ -303,7 +305,7 @@
                        'slack-group-close-event))))
     (make-instance klass :payload payload)))
 
-(cl-defmethod slack-event-save-room ((_this slack-group-close-event) room team)
+(cl-defmethod slack-event-save-room ((_this slack-group-close-event) room team _cb)
   (oset room is-member nil)
   (slack-team-set-groups team (list room)))
 
@@ -312,8 +314,8 @@
                      (slack-room-name room team))
              team :level 'info))
 
-(cl-defmethod slack-event-save-room ((_this slack-im-close-event) room team)
-  (oset room is-open nil)
+(cl-defmethod slack-event-save-room ((_this slack-im-close-event) room team _cb)
+  (oset room properties (plist-put (oref room properties) :is_dormant t))
   (slack-team-set-ims team (list room)))
 
 (cl-defmethod slack-event-notify ((this slack-im-close-event) _room team)
@@ -341,11 +343,11 @@
     (cl-pushnew user (oref room members)
                 :test #'string=)))
 
-(cl-defmethod slack-event-save-room ((this slack-member-joined-channel-event) room team)
+(cl-defmethod slack-event-save-room ((this slack-member-joined-channel-event) room team _cb)
   (slack-event-update-room this room team)
   (slack-team-set-channels team (list room)))
 
-(cl-defmethod slack-event-save-room ((this slack-member-joined-group-event) room team)
+(cl-defmethod slack-event-save-room ((this slack-member-joined-group-event) room team _cb)
   (slack-event-update-room this room team)
   (slack-team-set-groups team (list room)))
 
@@ -368,11 +370,11 @@
           (cl-remove-if #'(lambda (e) (string= e user))
                         (oref room members)))))
 
-(cl-defmethod slack-event-save-room ((this slack-member-left-channel-event) room team)
+(cl-defmethod slack-event-save-room ((this slack-member-left-channel-event) room team _cb)
   (slack-event-update-room this room team)
   (slack-team-set-channels team (list room)))
 
-(cl-defmethod slack-event-save-room ((this slack-member-left-group-event) room team)
+(cl-defmethod slack-event-save-room ((this slack-member-left-group-event) room team _cb)
   (slack-event-update-room this room team)
   (slack-team-set-groups team (list room)))
 

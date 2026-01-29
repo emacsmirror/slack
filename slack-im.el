@@ -38,21 +38,23 @@
 
 (defconst slack-im-update-mark-url "https://slack.com/api/im.mark")
 
-
 (defclass slack-im (slack-room)
   ((user :initarg :user :initform "")
-   (is-open :initarg :is_open :initform t)
-   (is-user-deleted :initarg :is_user_deleted :initform nil)))
+   (is-user-deleted :initarg :is_user_deleted :initform nil)
+   (is-frozen :initarg :is_frozen :initform nil)
+   (properties :initarg :properties :initform nil :documnetation "This contains extra property like :is_dormant, useful to calculate if channel is open.")))
 
 (cl-defmethod slack-merge ((this slack-im) other)
   (cl-call-next-method)
   (oset this user (oref other user))
-  (oset this is-open (oref other is-open))
+  (oset this is-frozen (oref other is-frozen))
+  (oset this properties (oref other properties))
   (oset this is-user-deleted (oref other is-user-deleted)))
 
 (cl-defmethod slack-room-open-p ((room slack-im))
-  (oref room is-open)
-  (not (oref room is-user-deleted)))
+  (and (not (oref room is-frozen))
+       (not (oref room is-user-deleted))
+       (not (plist-get (oref room properties ) :is_dormant))))
 
 (cl-defmethod slack-im-user-presence ((room slack-im) team)
   (or (slack-user-presence-to-string (slack-user-find room team)
@@ -90,8 +92,8 @@
 (defun slack-im-names (team)
   (cl-labels
       ((filter (ims)
-               (cl-remove-if #'(lambda (im) (not (oref im is-open)))
-                             ims)))
+         (cl-remove-if #'(lambda (im) (not (slack-room-open-p im)))
+                       ims)))
     (slack-room-names (slack-team-ims team)
                       team
                       #'filter)))
