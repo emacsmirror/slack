@@ -146,7 +146,9 @@ and forces recomputation of load-more placeholders next time.
     (when (slack-room-member-p room)
       (oset room last-read ts)
       (slack-buffer-update-marker-overlay this)
-      (slack-conversations-mark room team ts after-success))))
+      (slack-conversations-mark room team ts after-success)
+      ;; update read counts after marking
+      (slack-counts-update slack-current-team))))
 
 (cl-defmethod slack-buffer-send-message ((this slack-message-buffer) message)
   (slack-message-send-internal message
