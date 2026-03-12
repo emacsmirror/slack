@@ -53,30 +53,43 @@
 (defun slack-activity-feed--parse-item (item-data)
   "Parse a single ITEM-DATA plist from the activity.feed API response."
   (let* ((i (plist-get item-data :item))
+         (type (plist-get i :type))
          (m (plist-get i :message))
          (r (plist-get i :reaction))
-         (bundle-msg (plist-get
-                      (plist-get
-                       (plist-get m :bundle_info)
-                       :payload)
-                      :message)))
+         (bundle-payload (plist-get (plist-get i :bundle_info) :payload))
+         (bundle-msg (plist-get bundle-payload :message))
+         ;; thread_v2: thread entry with channel_id, thread_ts, latest_ts
+         (thread-entry (plist-get bundle-payload :thread_entry))
+         ;; dm: DM entry with latest_message containing ts and channel
+         (dm-entry (plist-get (plist-get bundle-payload :dm_entry) :latest_message))
+         ;; generic_system_alert: channel invite with click_target_id
+         (alert-payload (plist-get i :generic_system_alert_payload))
+         ;; Resolve ts and channel from whichever source is available
+         (ts (or (plist-get m :ts)
+                 (plist-get bundle-msg :ts)
+                 (plist-get thread-entry :latest_ts)
+                 (plist-get dm-entry :ts)))
+         (channel (or (plist-get m :channel)
+                      (plist-get bundle-msg :channel)
+                      (plist-get thread-entry :channel_id)
+                      (plist-get dm-entry :channel)
+                      (plist-get alert-payload :click_target_id)))
+         (thread-ts (or (plist-get m :thread_ts)
+                        (plist-get thread-entry :thread_ts))))
     (make-instance
      'slack-activity
      :is-unread (slack-activity-feed--jbool (plist-get item-data :is_unread))
      :feed-ts (format "%s" (plist-get item-data :feed_ts))
      :item (make-instance
             'activity-item
-            :type (plist-get i :type)
+            :type type
             :message (make-instance
                       'activity-message
-                      :ts (format "%s" (or (plist-get m :ts)
-                                           (plist-get bundle-msg :ts)))
-                      :channel (format "%s" (or (plist-get m :channel)
-                                                (plist-get bundle-msg :channel)))
+                      :ts (format "%s" (or ts "0"))
+                      :channel (format "%s" (or channel "unknown"))
                       :is-broadcast (slack-activity-feed--jbool
                                      (plist-get m :is_broadcast))
-                      :thread-ts (when-let ((tts (plist-get m :thread_ts)))
-                                   (format "%s" tts))
+                      :thread-ts (when thread-ts (format "%s" thread-ts))
                       :author-id (format "%s" (plist-get m :author_user_id)))
             :reaction (when r (make-instance
                                'activity-reaction
@@ -101,7 +114,7 @@ Run an action on the data returned with AFTER-SUCCESS."
       :data (let ((token (or (oref team :enterprise-token)
                              (oref team :token)))
                   (mode (if slack-activity-feed-mode-show-only-unread "priority_unreads_v1" "chrono_reads_and_unreads")))
-              (concat "------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"token\"\r\n\r\n" token "\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"limit\"\r\n\r\n20\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"types\"\r\n\r\nthread_reply,message_reaction,internal_channel_invite,list_record_edited,bot_dm_bundle,at_user,at_user_group,at_channel,at_everyone,keyword,list_record_assigned,list_user_mentioned,external_channel_invite,shared_workspace_invite,external_dm_invite\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"mode\"\r\n\r\n" mode "\r\n" (if cursor (concat "------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"cursor\"\r\n\r\n" cursor "\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie--\r\n") "") "------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_reason\"\r\n\r\nfetchActivityFeed\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_mode\"\r\n\r\nonline\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_sonic\"\r\n\r\ntrue\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_app_name\"\r\n\r\nclient\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie--\r\n"))
+              (concat "------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"token\"\r\n\r\n" token "\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"limit\"\r\n\r\n20\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"types\"\r\n\r\nthread_v2,dm,generic_system_alert,message_reaction,internal_channel_invite,list_record_edited,bot_dm_bundle,at_user,at_user_group,at_channel,at_everyone,keyword,list_record_assigned,list_user_mentioned,external_channel_invite,shared_workspace_invite,external_dm_invite\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"mode\"\r\n\r\n" mode "\r\n" (if cursor (concat "------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"cursor\"\r\n\r\n" cursor "\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie--\r\n") "") "------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_reason\"\r\n\r\nfetchActivityFeed\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_mode\"\r\n\r\nonline\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_sonic\"\r\n\r\ntrue\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_app_name\"\r\n\r\nclient\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie--\r\n"))
       :headers (list
                 (cons "content-type"
                       "multipart/form-data; boundary=----WebKitFormBoundaryh7x3DqJqAIvkEcie"))))))
@@ -163,7 +176,7 @@ ACTIVITY-TYPE is the activity type string (e.g. \"thread_reply\")."
                                  (if (slack-channel-p room) "#" "@")
                                  room-name))
                (type-prefix (pcase activity-type
-                              ("thread_reply" "Thread in ")
+                              ((or "thread_reply" "thread_v2") "Thread in ")
                               (_ "")))
                (header (propertize (concat type-prefix location)
                                    'face 'slack-search-result-message-header-face)))
