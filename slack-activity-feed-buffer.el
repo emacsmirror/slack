@@ -239,9 +239,10 @@ Run an action on the data returned with AFTER-SUCCESS."
                                                        (plist-get (plist-get (plist-get (plist-get m :bundle_info) :payload) :message) :ts)))
                                        :channel (format "%s" (or
                                                               (plist-get m :channel)
-                                                              (plist-get (plist-get (plist-get (plist-get m :bundle_info) :payload) :message) :ts)))
+                                                              (plist-get (plist-get (plist-get (plist-get m :bundle_info) :payload) :message) :channel)))
                                        :is-broadcast (jbool (plist-get m :is_broadcast))
-                                       :thread-ts (or (format "%s" (plist-get m :thread_ts)))
+                                       :thread-ts (when-let ((tts (plist-get m :thread_ts)))
+                                                    (format "%s" tts))
                                        :author-id (format "%s" (plist-get m :author_user_id)))
                              :reaction (when r (make-instance
                                                 'activity-reaction
@@ -319,9 +320,10 @@ Run an action on the data returned with AFTER-SUCCESS."
                                                                        (plist-get (plist-get (plist-get (plist-get m :bundle_info) :payload) :message) :ts)))
                                                        :channel (format "%s" (or
                                                                               (plist-get m :channel)
-                                                                              (plist-get (plist-get (plist-get (plist-get m :bundle_info) :payload) :message) :ts)))
+                                                                              (plist-get (plist-get (plist-get (plist-get m :bundle_info) :payload) :message) :channel)))
                                                        :is-broadcast (jbool (plist-get m :is_broadcast))
-                                                       :thread-ts (or (format "%s" (plist-get m :thread_ts)))
+                                                       :thread-ts (when-let ((tts (plist-get m :thread_ts)))
+                                                                    (format "%s" tts))
                                                        :author-id (format "%s" (plist-get m :author_user_id)))
                                              :reaction (when r (make-instance
                                                                 'activity-reaction
@@ -341,14 +343,13 @@ Run an action on the data returned with AFTER-SUCCESS."
   (if-let* ((ts (get-text-property (point) 'ts))
             (team-id (get-text-property (point) 'team-id))
             (room-id (get-text-property (point) 'room-id))
-            (thread-ts (get-text-property (point) 'thread-ts))
             (team (slack-team-find team-id)))
-      (slack-open-message
-       team
-       (slack-room-find room-id team)
-       (--find (s-matches-p "[0-9]" it) (list ts))
-       ;; found out that when a ts is nil, it comes "nil"
-       (--find (s-matches-p "[0-9]" it) (list thread-ts)))
+      (let ((thread-ts (get-text-property (point) 'thread-ts)))
+        (slack-open-message
+         team
+         (slack-room-find room-id team)
+         ts
+         thread-ts))
     (error "Not possible to jump to message")))
 (define-key slack-activity-feed-buffer-mode-map (kbd "RET") 'slack-activity-feed-open-message)
 
