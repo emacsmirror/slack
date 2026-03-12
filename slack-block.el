@@ -496,7 +496,7 @@ You need to install `language-detection' for this to work.")
         (id (oref this user-id)))
     (unless team
       (error "`slack-rich-text-user-element' need team as option"))
-    (propertize (format "@%s" (slack-user-name id team))
+    (propertize (format "@%s" (or (slack-user-name id team) id))
                 'face 'slack-message-mention-face)))
 
 (cl-defmethod slack-block-to-mrkdwn ((this slack-rich-text-user-element) option)
@@ -505,7 +505,7 @@ You need to install `language-detection' for this to work.")
     (unless team
       (error "`slack-rich-text-user-element' need team as option"))
     (slack-propertize-mention-text 'slack-message-mention-face
-                                   (format "@%s" (slack-user-name id team))
+                                   (format "@%s" (or (slack-user-name id team) id))
                                    (format "<@%s>" id))))
 
 (defun slack-create-rich-text-user-element (payload)
