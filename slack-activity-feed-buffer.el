@@ -151,42 +151,46 @@ Run an action on the data returned with AFTER-SUCCESS."
    (thread-ts :initarg :thread-ts :type (or null string))
    (author-id :initarg :author-id :type (or null string))))
 
-(cl-defmethod slack-activity-message-to-string ((this activity-message) team)
-  "Format THIS activity-message of TEAM as a string for presentation."
+(cl-defmethod slack-activity-message-to-string ((this activity-message) team &optional activity-type)
+  "Format THIS activity-message of TEAM as a string for presentation.
+ACTIVITY-TYPE is the activity type string (e.g. \"thread_reply\")."
   (with-slots (channel ts is-broadcast thread-ts author-id) this
-    (condition-case err ;; this is to find out more easily messages that we fail to handle
+    (condition-case err
         (let* ((room (slack-room-find channel team))
-               (header (propertize (format "%s%s"
-                                           (if (slack-channel-p room)
-                                               "#" "@")
-                                           (or (ignore-errors (slack-room-name room team)) "name not available - try to update channel list")
-                                           )
+               (room-name (or (ignore-errors (slack-room-name room team))
+                              "name not available - try to update channel list"))
+               (location (format "%s%s"
+                                 (if (slack-channel-p room) "#" "@")
+                                 room-name))
+               (type-prefix (pcase activity-type
+                              ("thread_reply" "Thread in ")
+                              (_ "")))
+               (header (propertize (concat type-prefix location)
                                    'face 'slack-search-result-message-header-face)))
           (propertize (concat header
-                              (when-let ((author (slack-user-name author-id team))) (format " from %s" author))
+                              (when-let ((author (slack-user-name author-id team)))
+                                (format " from %s" author))
                               "\n"
                               (or
-                               (condition-case err
+                               (condition-case msg-err
                                    (when (or ts thread-ts)
                                      (slack-message-body
                                       (slack-message-get-or-fetch
                                        ts
                                        (oref room id) team thread-ts)
-                                      team)
-                                     )
+                                      team))
                                  (error
-                                  (message "slack-activity-message-to-string: Loading messages failed with: %S" (error-message-string err))
+                                  (message "slack-activity-message-to-string: Loading messages failed with: %S"
+                                           (error-message-string msg-err))
                                   nil))
-                               "TODO")
-                              )
+                               "TODO"))
                       'ts ts
                       'team-id (oref team id)
                       'room-id (oref room id)
                       'thread-ts thread-ts))
       (error
-
-       (format "TODO there was an error, please report this message at https://github.com/emacs-slack/emacs-slack/issues:\n%s" (list this err))))
-    ))
+       (format "TODO there was an error, please report this message at https://github.com/emacs-slack/emacs-slack/issues:\n%s"
+               (list this err))))))
 
 (defclass activity-reaction ()
   ((user :initarg :user :type string)
@@ -207,12 +211,11 @@ Run an action on the data returned with AFTER-SUCCESS."
 (cl-defmethod slack-activity-item-to-string ((this activity-item) team)
   "Convert THIS activity for TEAM into a string."
   (with-slots (type message reaction) this
-    (if (equal type "bot_dm_bundle") ;; this bot message seem to have no valuable information
+    (if (equal type "bot_dm_bundle")
         ""
       (concat
-       (slack-activity-message-to-string message team)
-       (when reaction (concat "\n" (slack-activity-reaction-to-string reaction team)))
-       ))))
+       (slack-activity-message-to-string message team type)
+       (when reaction (concat "\n" (slack-activity-reaction-to-string reaction team)))))))
 
 (defclass slack-activity ()
   ((is-unread :initarg :is-unread :type boolean)
