@@ -46,6 +46,43 @@
                "slack-activity-feed will show only unread messages next time"
              "slack-activity-feed will show read and unread messages next time")))
 
+(defun slack-activity-feed--jbool (jf)
+  "Return nil if JF is JSON false, t otherwise."
+  (not (eq jf :json-false)))
+
+(defun slack-activity-feed--parse-item (item-data)
+  "Parse a single ITEM-DATA plist from the activity.feed API response."
+  (let* ((i (plist-get item-data :item))
+         (m (plist-get i :message))
+         (r (plist-get i :reaction))
+         (bundle-msg (plist-get
+                      (plist-get
+                       (plist-get m :bundle_info)
+                       :payload)
+                      :message)))
+    (make-instance
+     'slack-activity
+     :is-unread (slack-activity-feed--jbool (plist-get item-data :is_unread))
+     :feed-ts (format "%s" (plist-get item-data :feed_ts))
+     :item (make-instance
+            'activity-item
+            :type (plist-get i :type)
+            :message (make-instance
+                      'activity-message
+                      :ts (format "%s" (or (plist-get m :ts)
+                                           (plist-get bundle-msg :ts)))
+                      :channel (format "%s" (or (plist-get m :channel)
+                                                (plist-get bundle-msg :channel)))
+                      :is-broadcast (slack-activity-feed--jbool
+                                     (plist-get m :is_broadcast))
+                      :thread-ts (when-let ((tts (plist-get m :thread_ts)))
+                                   (format "%s" tts))
+                      :author-id (format "%s" (plist-get m :author_user_id)))
+            :reaction (when r (make-instance
+                               'activity-reaction
+                               :user (format "%s" (plist-get r :user))
+                               :name (format "%s" (plist-get r :name))))))))
+
 (defun slack-activity-feed-request (team &optional after-success cursor)
   "Request activity feed for CHANNEL-ID of TEAM.
 Run an action on the data returned with AFTER-SUCCESS."
@@ -211,7 +248,7 @@ Run an action on the data returned with AFTER-SUCCESS."
 (cl-defmethod slack-buffer-request-history ((this slack-activity-feed-buffer) after-success)
   (with-slots (activity-feed) this
     (slack-activity-feed-request
-     (slack-team-select)
+     (slack-buffer-team this)
      (lambda (data)
        (let ((new-activity-feed
               (make-instance
@@ -219,37 +256,10 @@ Run an action on the data returned with AFTER-SUCCESS."
                :activities
                (append
                 (oref activity-feed activities)
-                (--map
-                 (cl-labels
-                     ((jbool (jf) (not (eq jf :json-false))))
-                   (make-instance
-                    'slack-activity
-                    :is-unread (jbool (plist-get it :is_unread))
-                    :feed-ts (format "%s" (plist-get it :feed_ts))
-                    :item (let* ((i (plist-get it :item))
-                                 (m (plist-get i :message))
-                                 (r (plist-get i :reaction)))
-                            (make-instance
-                             'activity-item
-                             :type (plist-get i :type)
-                             :message (make-instance
-                                       'activity-message
-                                       :ts (format "%s"
-                                                   (or (plist-get m :ts)
-                                                       (plist-get (plist-get (plist-get (plist-get m :bundle_info) :payload) :message) :ts)))
-                                       :channel (format "%s" (or
-                                                              (plist-get m :channel)
-                                                              (plist-get (plist-get (plist-get (plist-get m :bundle_info) :payload) :message) :channel)))
-                                       :is-broadcast (jbool (plist-get m :is_broadcast))
-                                       :thread-ts (when-let ((tts (plist-get m :thread_ts)))
-                                                    (format "%s" tts))
-                                       :author-id (format "%s" (plist-get m :author_user_id)))
-                             :reaction (when r (make-instance
-                                                'activity-reaction
-                                                :user (format "%s" (plist-get r :user))
-                                                :name (format "%s" (plist-get r :name))))))))
-                 (plist-get data :items)))
-               :pagination (plist-get (plist-get data :response_metadata) :next_cursor)
+                (mapcar #'slack-activity-feed--parse-item
+                        (plist-get data :items)))
+               :pagination (plist-get (plist-get data :response_metadata)
+                                      :next_cursor)
                :last (- (length (oref activity-feed activities)) 1))))
          (oset this activity-feed new-activity-feed)
          (funcall after-success)))
@@ -296,46 +306,18 @@ Run an action on the data returned with AFTER-SUCCESS."
   "Show Slack activity feed."
   (interactive)
   (let ((team (slack-team-select)))
-    (cl-labels
-        ((jbool (jf) (not (eq jf :json-false)))
-         (after-success (data)
-           (let* ((activity-feed (make-instance
-                                  'slack-activity-feed
-                                  :activities
-                                  (--map
-                                   (make-instance
-                                    'slack-activity
-                                    :is-unread (jbool (plist-get it :is_unread))
-                                    :feed-ts (format "%s" (plist-get it :feed_ts))
-                                    :item (let* ((i (plist-get it :item))
-                                                 (m (plist-get i :message))
-                                                 (r (plist-get i :reaction)))
-                                            (make-instance
-                                             'activity-item
-                                             :type (plist-get i :type)
-                                             :message (make-instance
-                                                       'activity-message
-                                                       :ts (format "%s"
-                                                                   (or (plist-get m :ts)
-                                                                       (plist-get (plist-get (plist-get (plist-get m :bundle_info) :payload) :message) :ts)))
-                                                       :channel (format "%s" (or
-                                                                              (plist-get m :channel)
-                                                                              (plist-get (plist-get (plist-get (plist-get m :bundle_info) :payload) :message) :channel)))
-                                                       :is-broadcast (jbool (plist-get m :is_broadcast))
-                                                       :thread-ts (when-let ((tts (plist-get m :thread_ts)))
-                                                                    (format "%s" tts))
-                                                       :author-id (format "%s" (plist-get m :author_user_id)))
-                                             :reaction (when r (make-instance
-                                                                'activity-reaction
-                                                                :user (format "%s" (plist-get r :user))
-                                                                :name (format "%s" (plist-get r :name)))))))
-                                   (plist-get data :items))
-                                  :pagination (plist-get (plist-get data :response_metadata) :next_cursor)))
-                  (buffer (slack-create-activity-feed-buffer
-                           activity-feed
-                           team)))
-             (slack-buffer-display buffer))))
-      (slack-activity-feed-request team #'after-success))))
+    (slack-activity-feed-request
+     team
+     (lambda (data)
+       (let* ((activity-feed
+               (make-instance
+                'slack-activity-feed
+                :activities (mapcar #'slack-activity-feed--parse-item
+                                    (plist-get data :items))
+                :pagination (plist-get (plist-get data :response_metadata)
+                                       :next_cursor)))
+              (buffer (slack-create-activity-feed-buffer activity-feed team)))
+         (slack-buffer-display buffer))))))
 
 (defun slack-activity-feed-open-message ()
   "Open message at point of activity-feed."
