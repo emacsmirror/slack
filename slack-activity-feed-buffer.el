@@ -37,7 +37,7 @@
 (declare-function "slack-message-get-or-fetch" "slack-message.el")
 
 (defvar slack-activity-feed-url "https://slack.com/api/activity.feed")
-(defvar slack-activity-feed-mode-show-only-unread t "If nil will show read and unread")
+(defvar slack-activity-feed-mode-show-only-unread nil "If non-nil, show only unread activity.")
 
 (defun slack-activity-feed-toggle-mode ()
   (interactive)
