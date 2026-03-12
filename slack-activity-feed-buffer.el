@@ -294,7 +294,7 @@ Run an action on the data returned with AFTER-SUCCESS."
 (defun slack-activity-feed-show ()
   "Show Slack activity feed."
   (interactive)
-  (let ((team slack-current-team))
+  (let ((team (slack-team-select)))
     (cl-labels
         ((jbool (jf) (not (eq jf :json-false)))
          (after-success (data)
