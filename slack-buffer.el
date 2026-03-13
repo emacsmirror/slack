@@ -800,6 +800,64 @@
                          "Select Channel: "))))
       (slack-conversations-unarchive channel team))))
 
+(defun slack--file-upload-v2 (file filename team channel-id &optional initial-comment thread-ts)
+  "Upload FILE as FILENAME using the v2 upload API.
+Uses files.getUploadURLExternal + files.completeUploadExternal.
+TEAM is the slack team, CHANNEL-ID is the target channel/conversation.
+INITIAL-COMMENT and THREAD-TS are optional."
+  (let ((file-size (file-attribute-size (file-attributes file))))
+    (cl-labels
+        ((on-get-url (&key data &allow-other-keys)
+           (slack-request-handle-error
+            (data "slack-file-upload")
+            (let ((upload-url (plist-get data :upload_url))
+                  (file-id (plist-get data :file_id)))
+              (cl-labels
+                  ((on-upload-done (&key _data &allow-other-keys)
+                     (slack--file-complete-upload
+                      team file-id filename channel-id
+                      initial-comment thread-ts)))
+                (slack-request
+                 (slack-request-create
+                  upload-url
+                  team
+                  :type "POST"
+                  :files (list (cons "file" file))
+                  :headers (list (cons "Content-Type" "multipart/form-data"))
+                  :parser 'ignore
+                  :without-auth t
+                  :no-retry t
+                  :success #'on-upload-done)))))))
+      (slack-request
+       (slack-request-create
+        slack-file-get-upload-url-external
+        team
+        :type "GET"
+        :params (list (cons "filename" filename)
+                      (cons "length" (number-to-string file-size)))
+        :success #'on-get-url)))))
+
+(defun slack--file-complete-upload (team file-id title channel-id &optional initial-comment thread-ts)
+  "Complete a v2 file upload by calling files.completeUploadExternal."
+  (cl-labels
+      ((on-complete (&key data &allow-other-keys)
+         (slack-request-handle-error
+          (data "slack-file-upload"))))
+    (slack-request
+     (slack-request-create
+      slack-file-complete-upload-external
+      team
+      :type "POST"
+      :data (json-encode
+             (append
+              (list (cons "files" (vector (list (cons "id" file-id)
+                                                (cons "title" (or title ""))))))
+              (when channel-id (list (cons "channel_id" channel-id)))
+              (when initial-comment (list (cons "initial_comment" initial-comment)))
+              (when thread-ts (list (cons "thread_ts" thread-ts)))))
+      :headers (list (cons "Content-Type" "application/json;charset=utf-8"))
+      :success #'on-complete))))
+
 (defun slack-file-upload (file filetype filename)
   "Uploads FILE with FILETYPE and FILENAME."
   (interactive
@@ -811,26 +869,13 @@
   (slack-if-let*
       ((buffer slack-current-buffer)
        (team (slack-buffer-team buffer))
-       (initial-comment (read-from-minibuffer "Message: ")))
-      (cl-labels
-          ((on-file-upload (&key data &allow-other-keys)
-             (slack-request-handle-error
-              (data "slack-file-upload"))))
-
-        (slack-request
-         (slack-request-create
-          slack-file-upload-url
-          team
-          :type "POST"
-          :params (append (slack-file-upload-params buffer)
-                          (list
-                           (cons "filename" filename)
-                           (cons "filetype" filetype)
-                           (if initial-comment
-                               (cons "initial_comment" initial-comment))))
-          :files (list (cons "file" file))
-          :headers (list (cons "Content-Type" "multipart/form-data"))
-          :success #'on-file-upload)))
+       (initial-comment (read-from-minibuffer "Message: "))
+       (upload-params (slack-file-upload-params buffer))
+       (channel-id (cdr (assoc "channels" upload-params))))
+      (let ((thread-ts (cdr (assoc "thread_ts" upload-params))))
+        (slack--file-upload-v2 file filename team channel-id
+                               (and (not (string-empty-p initial-comment)) initial-comment)
+                               thread-ts))
     (error "Call from message buffer or thread buffer")))
 
 (defun slack-file-upload-quick (file channel-id team &optional initial-comment thread-ts)
@@ -846,24 +891,9 @@ Default to the current buffer."
            (read-from-minibuffer "Message: ")
            (ignore-errors (oref slack-current-buffer thread-ts))
            )))
-  (cl-labels
-      ((on-file-upload (&key data &allow-other-keys)
-         (slack-request-handle-error
-          (data "slack-file-upload"))))
-
-    (slack-request
-     (slack-request-create
-      slack-file-upload-url
-      team
-      :type "POST"
-      :params (-non-nil
-               (list
-                (when thread-ts (cons "thread_ts" thread-ts))
-                (cons "channels" channel-id)
-                (when initial-comment (cons "initial_comment" initial-comment))))
-      :files (list (cons "file" file))
-      :headers (list (cons "Content-Type" "multipart/form-data"))
-      :success #'on-file-upload))))
+  (slack--file-upload-v2 file (file-name-nondirectory file) team channel-id
+                         (and initial-comment (not (string-empty-p initial-comment)) initial-comment)
+                         thread-ts))
 
 (defun slack-clipboard-image-upload ()
   "Uploads png image from clipboard."
