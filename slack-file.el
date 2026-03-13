@@ -65,6 +65,7 @@
 ;;   }
 ;; })
 (defconst slack-file-types '(("auto" . "Auto Detect Type")
+                             ("txt" . "Plain Text")
                              ("text" . "Plain Text")
                              ("ai" . "Illustrator File")
                              ("apk" . "APK")
