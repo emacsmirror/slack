@@ -81,7 +81,7 @@
   (when bot
     (let ((image (slack-bot-fetch-image bot size team)))
       (when image
-        (create-image image nil nil :ascent 80)))))
+        (slack-image--round-profile image size)))))
 
 (cl-defmethod slack-bot-find ((m slack-bot-message) team)
   ;; TODO: ensure bot-id exists
