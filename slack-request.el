@@ -225,7 +225,8 @@
                                                 (list
                                                  slack-rtm-connect-url
                                                  slack-conversations-list-url
-                                                 slack-file-upload-url
+                                                 slack-file-get-upload-url-external
+                                                 slack-file-complete-upload-external
                                                  slack-get-permalink-url
                                                  slack-conversations-members-url
                                                  slack-conversations-open-url

@@ -50,6 +50,8 @@
 (defconst slack-file-history-url "https://slack.com/api/files.list")
 (defconst slack-file-list-url "https://slack.com/api/files.list")
 (defconst slack-file-upload-url "https://slack.com/api/files.upload")
+(defconst slack-file-get-upload-url-external "https://slack.com/api/files.getUploadURLExternal")
+(defconst slack-file-complete-upload-external "https://slack.com/api/files.completeUploadExternal")
 (defconst slack-file-delete-url "https://slack.com/api/files.delete")
 ;; [file type | Slack](https://api.slack.com/types/file#file_types)
 ;; let s = "";
@@ -412,23 +414,11 @@
        (initial-comment (read-from-minibuffer "Message: "))
        (filetype (slack-file-select-filetype))
        (content (buffer-substring-no-properties beg end)))
-      (cl-labels
-          ((on-success (&key data &allow-other-keys)
-             (slack-request-handle-error
-              (data "slack-file-upload-snippet"))))
-        (slack-request
-         (slack-request-create
-          slack-file-upload-url
-          team
-          :type "POST"
-          :headers (list (cons "Content-Type" "multipart/form-data"))
-
-          :params (list (and filetype (cons "filetype" filetype))
-                        (and initial-comment (cons "initial_comment" initial-comment))
-                        (and title (cons "title" title))
-                        (cons "channels" channels)
-                        (cons "content" content))
-          :success #'on-success)))))
+      (let ((tmpfile (make-temp-file "slack-snippet" nil
+                                     (if filetype (concat "." filetype) ".txt"))))
+        (write-region content nil tmpfile nil 'quiet)
+        (slack--file-upload-v2 tmpfile (or title "snippet") team channels
+                               (and (not (string-empty-p initial-comment)) initial-comment)))))
 
 ;; TODO implement this
 ;; (defun slack-file-delete ()
