@@ -133,9 +133,10 @@
                                                   (list :max-height max-height))
                                               (if max-width
                                                   (list :max-width max-width))))))
-    (if (and (display-graphic-p) imagemagick-available-p)
-        (slack-image-shrink image max-height)
-      image)))
+    (let ((final (if (and (display-graphic-p) imagemagick-available-p)
+                     (slack-image-shrink image max-height)
+                   image)))
+      (slack-image--round-content path final))))
 
 (defun slack-image-exists-p (image-spec)
   (file-exists-p (slack-image-path (car image-spec))))
@@ -215,6 +216,75 @@ DISPLAY-PROP may be a sliced image specification or an image object."
                                :cookie (slack-team-cookie team))))
     )
   )
+
+(defun slack-image--round-content (file image)
+  "Wrap IMAGE (created from FILE) in an SVG with small rounded corners.
+Returns IMAGE unchanged if SVG is not available."
+  (if (and (image-type-available-p 'svg) (file-exists-p file))
+      (let* ((size (image-size image t))
+             (w (car size))
+             (h (cdr size)))
+        (if (and (> w 0) (> h 0))
+            (let* ((r 8)
+                   (ext (or (file-name-extension file) "png"))
+                   (mime (concat "image/" (if (string= ext "jpg") "jpeg" ext)))
+                   (b64 (with-temp-buffer
+                          (insert-file-contents-literally file)
+                          (base64-encode-region (point-min) (point-max) t)
+                          (buffer-string)))
+                   (svg (format
+                         "<svg xmlns='http://www.w3.org/2000/svg'
+                               xmlns:xlink='http://www.w3.org/1999/xlink'
+                               width='%d' height='%d'>
+                            <defs>
+                              <clipPath id='c'>
+                                <rect width='%d' height='%d' rx='%d' ry='%d'/>
+                              </clipPath>
+                            </defs>
+                            <image width='%d' height='%d'
+                                   xlink:href='data:%s;base64,%s'
+                                   clip-path='url(#c)'/>
+                          </svg>"
+                         w h w h r r w h mime b64)))
+              (create-image svg 'svg t :ascent 80))
+          image))
+    image))
+
+(defvar slack-image--profile-cache (make-hash-table :test 'equal)
+  "Cache of profile images keyed by (file . size).")
+
+(defun slack-image--round-profile (file size)
+  "Create a profile image from FILE with rounded corners.
+SIZE is the image dimension in pixels.  Falls back to a plain image
+when SVG support is not available.  Results are cached."
+  (let ((key (cons file size)))
+    (or (gethash key slack-image--profile-cache)
+        (puthash key
+                 (if (and (image-type-available-p 'svg) (file-exists-p file))
+                     (let* ((r (/ size 4))
+                            (ext (or (file-name-extension file) "png"))
+                            (mime (concat "image/" (if (string= ext "jpg") "jpeg" ext)))
+                            (b64 (with-temp-buffer
+                                   (insert-file-contents-literally file)
+                                   (base64-encode-region (point-min) (point-max) t)
+                                   (buffer-string)))
+                            (svg (format
+                                  "<svg xmlns='http://www.w3.org/2000/svg'
+                                        xmlns:xlink='http://www.w3.org/1999/xlink'
+                                        width='%d' height='%d'>
+                                     <defs>
+                                       <clipPath id='c'>
+                                         <rect width='%d' height='%d' rx='%d' ry='%d'/>
+                                       </clipPath>
+                                     </defs>
+                                     <image width='%d' height='%d'
+                                            xlink:href='data:%s;base64,%s'
+                                            clip-path='url(#c)'/>
+                                   </svg>"
+                                  size size size size r r size size mime b64)))
+                       (create-image svg 'svg t :ascent 80))
+                   (create-image file nil nil :ascent 80))
+                 slack-image--profile-cache))))
 
 (provide 'slack-image)
 ;;; slack-image.el ends here

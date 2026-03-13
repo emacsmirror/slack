@@ -31,6 +31,7 @@
 (require 'slack-emoji)
 (require 'slack-dnd-status)
 (require 'slack-bot)
+(require 'slack-image)
 (require 'map)
 (require 'seq)
 
@@ -368,7 +369,7 @@ Optionally expire the message at UNIX-EXPIRE-BY-TIME."
   (when user
     (let ((image (slack-user-fetch-image user size team)))
       (when image
-        (create-image image nil nil :ascent 80)))))
+        (slack-image--round-profile image size)))))
 
 (defun slack-user-presence (user team)
   (gethash (plist-get user :id)
