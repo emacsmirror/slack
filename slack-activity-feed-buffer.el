@@ -168,7 +168,7 @@ Run an action on the data returned with AFTER-SUCCESS."
   "Format THIS activity-message of TEAM as a string for presentation.
 ACTIVITY-TYPE is the activity type string (e.g. \"thread_reply\")."
   (with-slots (channel ts is-broadcast thread-ts author-id) this
-    (condition-case err
+    (condition-case err ;; this is to find out more easily messages that we fail to handle
         (let* ((room (slack-room-find channel team))
                (room-name (or (ignore-errors (slack-room-name room team))
                               "name not available - try to update channel list"))
@@ -224,7 +224,7 @@ ACTIVITY-TYPE is the activity type string (e.g. \"thread_reply\")."
 (cl-defmethod slack-activity-item-to-string ((this activity-item) team)
   "Convert THIS activity for TEAM into a string."
   (with-slots (type message reaction) this
-    (if (equal type "bot_dm_bundle")
+    (if (equal type "bot_dm_bundle") ;; this bot message seem to have no valuable information
         ""
       (concat
        (slack-activity-message-to-string message team type)
