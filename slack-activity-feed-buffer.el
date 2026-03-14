@@ -37,7 +37,7 @@
 (declare-function "slack-message-get-or-fetch" "slack-message.el")
 
 (defvar slack-activity-feed-url "https://slack.com/api/activity.feed")
-(defvar slack-activity-feed-mode-show-only-unread t "If nil will show read and unread")
+(defvar slack-activity-feed-mode-show-only-unread nil "If non-nil, show only unread activity.")
 
 (defun slack-activity-feed-toggle-mode ()
   (interactive)
@@ -45,6 +45,56 @@
   (message (if slack-activity-feed-mode-show-only-unread
                "slack-activity-feed will show only unread messages next time"
              "slack-activity-feed will show read and unread messages next time")))
+
+(defun slack-activity-feed--jbool (jf)
+  "Return nil if JF is JSON false, t otherwise."
+  (not (eq jf :json-false)))
+
+(defun slack-activity-feed--parse-item (item-data)
+  "Parse a single ITEM-DATA plist from the activity.feed API response."
+  (let* ((i (plist-get item-data :item))
+         (type (plist-get i :type))
+         (m (plist-get i :message))
+         (r (plist-get i :reaction))
+         (bundle-payload (plist-get (plist-get i :bundle_info) :payload))
+         (bundle-msg (plist-get bundle-payload :message))
+         ;; thread_v2: thread entry with channel_id, thread_ts, latest_ts
+         (thread-entry (plist-get bundle-payload :thread_entry))
+         ;; dm: DM entry with latest_message containing ts and channel
+         (dm-entry (plist-get (plist-get bundle-payload :dm_entry) :latest_message))
+         ;; generic_system_alert: channel invite with click_target_id
+         (alert-payload (plist-get i :generic_system_alert_payload))
+         ;; Resolve ts and channel from whichever source is available
+         (ts (or (plist-get m :ts)
+                 (plist-get bundle-msg :ts)
+                 (plist-get thread-entry :latest_ts)
+                 (plist-get dm-entry :ts)))
+         (channel (or (plist-get m :channel)
+                      (plist-get bundle-msg :channel)
+                      (plist-get thread-entry :channel_id)
+                      (plist-get dm-entry :channel)
+                      (plist-get alert-payload :click_target_id)))
+         (thread-ts (or (plist-get m :thread_ts)
+                        (plist-get thread-entry :thread_ts))))
+    (make-instance
+     'slack-activity
+     :is-unread (slack-activity-feed--jbool (plist-get item-data :is_unread))
+     :feed-ts (format "%s" (plist-get item-data :feed_ts))
+     :item (make-instance
+            'activity-item
+            :type type
+            :message (make-instance
+                      'activity-message
+                      :ts (format "%s" (or ts "0"))
+                      :channel (format "%s" (or channel "unknown"))
+                      :is-broadcast (slack-activity-feed--jbool
+                                     (plist-get m :is_broadcast))
+                      :thread-ts (when thread-ts (format "%s" thread-ts))
+                      :author-id (format "%s" (plist-get m :author_user_id)))
+            :reaction (when r (make-instance
+                               'activity-reaction
+                               :user (format "%s" (plist-get r :user))
+                               :name (format "%s" (plist-get r :name))))))))
 
 (defun slack-activity-feed-request (team &optional after-success cursor)
   "Request activity feed for CHANNEL-ID of TEAM.
@@ -64,7 +114,7 @@ Run an action on the data returned with AFTER-SUCCESS."
       :data (let ((token (or (oref team :enterprise-token)
                              (oref team :token)))
                   (mode (if slack-activity-feed-mode-show-only-unread "priority_unreads_v1" "chrono_reads_and_unreads")))
-              (concat "------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"token\"\r\n\r\n" token "\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"limit\"\r\n\r\n20\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"types\"\r\n\r\nthread_reply,message_reaction,internal_channel_invite,list_record_edited,bot_dm_bundle,at_user,at_user_group,at_channel,at_everyone,keyword,list_record_assigned,list_user_mentioned,external_channel_invite,shared_workspace_invite,external_dm_invite\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"mode\"\r\n\r\n" mode "\r\n" (if cursor (concat "------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"cursor\"\r\n\r\n" cursor "\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie--\r\n") "") "------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_reason\"\r\n\r\nfetchActivityFeed\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_mode\"\r\n\r\nonline\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_sonic\"\r\n\r\ntrue\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_app_name\"\r\n\r\nclient\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie--\r\n"))
+              (concat "------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"token\"\r\n\r\n" token "\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"limit\"\r\n\r\n20\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"types\"\r\n\r\nthread_v2,dm,generic_system_alert,message_reaction,internal_channel_invite,list_record_edited,bot_dm_bundle,at_user,at_user_group,at_channel,at_everyone,keyword,list_record_assigned,list_user_mentioned,external_channel_invite,shared_workspace_invite,external_dm_invite\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"mode\"\r\n\r\n" mode "\r\n" (if cursor (concat "------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"cursor\"\r\n\r\n" cursor "\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie--\r\n") "") "------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_reason\"\r\n\r\nfetchActivityFeed\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_mode\"\r\n\r\nonline\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_sonic\"\r\n\r\ntrue\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_app_name\"\r\n\r\nclient\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie--\r\n"))
       :headers (list
                 (cons "content-type"
                       "multipart/form-data; boundary=----WebKitFormBoundaryh7x3DqJqAIvkEcie"))))))
@@ -114,42 +164,46 @@ Run an action on the data returned with AFTER-SUCCESS."
    (thread-ts :initarg :thread-ts :type (or null string))
    (author-id :initarg :author-id :type (or null string))))
 
-(cl-defmethod slack-activity-message-to-string ((this activity-message) team)
-  "Format THIS activity-message of TEAM as a string for presentation."
+(cl-defmethod slack-activity-message-to-string ((this activity-message) team &optional activity-type)
+  "Format THIS activity-message of TEAM as a string for presentation.
+ACTIVITY-TYPE is the activity type string (e.g. \"thread_reply\")."
   (with-slots (channel ts is-broadcast thread-ts author-id) this
     (condition-case err ;; this is to find out more easily messages that we fail to handle
         (let* ((room (slack-room-find channel team))
-               (header (propertize (format "%s%s"
-                                           (if (slack-channel-p room)
-                                               "#" "@")
-                                           (or (ignore-errors (slack-room-name room team)) "name not available - try to update channel list")
-                                           )
+               (room-name (or (ignore-errors (slack-room-name room team))
+                              "name not available - try to update channel list"))
+               (location (format "%s%s"
+                                 (if (slack-channel-p room) "#" "@")
+                                 room-name))
+               (type-prefix (pcase activity-type
+                              ((or "thread_reply" "thread_v2") "Thread in ")
+                              (_ "")))
+               (header (propertize (concat type-prefix location)
                                    'face 'slack-search-result-message-header-face)))
           (propertize (concat header
-                              (when-let ((author (slack-user-name author-id team))) (format " from %s" author))
+                              (when-let ((author (slack-user-name author-id team)))
+                                (format " from %s" author))
                               "\n"
                               (or
-                               (condition-case err
+                               (condition-case msg-err
                                    (when (or ts thread-ts)
                                      (slack-message-body
                                       (slack-message-get-or-fetch
                                        ts
                                        (oref room id) team thread-ts)
-                                      team)
-                                     )
+                                      team))
                                  (error
-                                  (message "slack-activity-message-to-string: Loading messages failed with: %S" (error-message-string err))
+                                  (message "slack-activity-message-to-string: Loading messages failed with: %S"
+                                           (error-message-string msg-err))
                                   nil))
-                               "TODO")
-                              )
+                               "TODO"))
                       'ts ts
                       'team-id (oref team id)
                       'room-id (oref room id)
                       'thread-ts thread-ts))
       (error
-
-       (format "TODO there was an error, please report this message at https://github.com/emacs-slack/emacs-slack/issues:\n%s" (list this err))))
-    ))
+       (format "TODO there was an error, please report this message at https://github.com/emacs-slack/emacs-slack/issues:\n%s"
+               (list this err))))))
 
 (defclass activity-reaction ()
   ((user :initarg :user :type string)
@@ -173,9 +227,8 @@ Run an action on the data returned with AFTER-SUCCESS."
     (if (equal type "bot_dm_bundle") ;; this bot message seem to have no valuable information
         ""
       (concat
-       (slack-activity-message-to-string message team)
-       (when reaction (concat "\n" (slack-activity-reaction-to-string reaction team)))
-       ))))
+       (slack-activity-message-to-string message team type)
+       (when reaction (concat "\n" (slack-activity-reaction-to-string reaction team)))))))
 
 (defclass slack-activity ()
   ((is-unread :initarg :is-unread :type boolean)
@@ -211,7 +264,7 @@ Run an action on the data returned with AFTER-SUCCESS."
 (cl-defmethod slack-buffer-request-history ((this slack-activity-feed-buffer) after-success)
   (with-slots (activity-feed) this
     (slack-activity-feed-request
-     (slack-team-select)
+     (slack-buffer-team this)
      (lambda (data)
        (let ((new-activity-feed
               (make-instance
@@ -219,36 +272,10 @@ Run an action on the data returned with AFTER-SUCCESS."
                :activities
                (append
                 (oref activity-feed activities)
-                (--map
-                 (cl-labels
-                     ((jbool (jf) (not (eq jf :json-false))))
-                   (make-instance
-                    'slack-activity
-                    :is-unread (jbool (plist-get it :is_unread))
-                    :feed-ts (format "%s" (plist-get it :feed_ts))
-                    :item (let* ((i (plist-get it :item))
-                                 (m (plist-get i :message))
-                                 (r (plist-get i :reaction)))
-                            (make-instance
-                             'activity-item
-                             :type (plist-get i :type)
-                             :message (make-instance
-                                       'activity-message
-                                       :ts (format "%s"
-                                                   (or (plist-get m :ts)
-                                                       (plist-get (plist-get (plist-get (plist-get m :bundle_info) :payload) :message) :ts)))
-                                       :channel (format "%s" (or
-                                                              (plist-get m :channel)
-                                                              (plist-get (plist-get (plist-get (plist-get m :bundle_info) :payload) :message) :ts)))
-                                       :is-broadcast (jbool (plist-get m :is_broadcast))
-                                       :thread-ts (or (format "%s" (plist-get m :thread_ts)))
-                                       :author-id (format "%s" (plist-get m :author_user_id)))
-                             :reaction (when r (make-instance
-                                                'activity-reaction
-                                                :user (format "%s" (plist-get r :user))
-                                                :name (format "%s" (plist-get r :name))))))))
-                 (plist-get data :items)))
-               :pagination (plist-get (plist-get data :response_metadata) :next_cursor)
+                (mapcar #'slack-activity-feed--parse-item
+                        (plist-get data :items)))
+               :pagination (plist-get (plist-get data :response_metadata)
+                                      :next_cursor)
                :last (- (length (oref activity-feed activities)) 1))))
          (oset this activity-feed new-activity-feed)
          (funcall after-success)))
@@ -294,46 +321,19 @@ Run an action on the data returned with AFTER-SUCCESS."
 (defun slack-activity-feed-show ()
   "Show Slack activity feed."
   (interactive)
-  (let ((team slack-current-team))
-    (cl-labels
-        ((jbool (jf) (not (eq jf :json-false)))
-         (after-success (data)
-           (let* ((activity-feed (make-instance
-                                  'slack-activity-feed
-                                  :activities
-                                  (--map
-                                   (make-instance
-                                    'slack-activity
-                                    :is-unread (jbool (plist-get it :is_unread))
-                                    :feed-ts (format "%s" (plist-get it :feed_ts))
-                                    :item (let* ((i (plist-get it :item))
-                                                 (m (plist-get i :message))
-                                                 (r (plist-get i :reaction)))
-                                            (make-instance
-                                             'activity-item
-                                             :type (plist-get i :type)
-                                             :message (make-instance
-                                                       'activity-message
-                                                       :ts (format "%s"
-                                                                   (or (plist-get m :ts)
-                                                                       (plist-get (plist-get (plist-get (plist-get m :bundle_info) :payload) :message) :ts)))
-                                                       :channel (format "%s" (or
-                                                                              (plist-get m :channel)
-                                                                              (plist-get (plist-get (plist-get (plist-get m :bundle_info) :payload) :message) :ts)))
-                                                       :is-broadcast (jbool (plist-get m :is_broadcast))
-                                                       :thread-ts (or (format "%s" (plist-get m :thread_ts)))
-                                                       :author-id (format "%s" (plist-get m :author_user_id)))
-                                             :reaction (when r (make-instance
-                                                                'activity-reaction
-                                                                :user (format "%s" (plist-get r :user))
-                                                                :name (format "%s" (plist-get r :name)))))))
-                                   (plist-get data :items))
-                                  :pagination (plist-get (plist-get data :response_metadata) :next_cursor)))
-                  (buffer (slack-create-activity-feed-buffer
-                           activity-feed
-                           team)))
-             (slack-buffer-display buffer))))
-      (slack-activity-feed-request team #'after-success))))
+  (let ((team (slack-team-select)))
+    (slack-activity-feed-request
+     team
+     (lambda (data)
+       (let* ((activity-feed
+               (make-instance
+                'slack-activity-feed
+                :activities (mapcar #'slack-activity-feed--parse-item
+                                    (plist-get data :items))
+                :pagination (plist-get (plist-get data :response_metadata)
+                                       :next_cursor)))
+              (buffer (slack-create-activity-feed-buffer activity-feed team)))
+         (slack-buffer-display buffer))))))
 
 (defun slack-activity-feed-open-message ()
   "Open message at point of activity-feed."
@@ -341,14 +341,13 @@ Run an action on the data returned with AFTER-SUCCESS."
   (if-let* ((ts (get-text-property (point) 'ts))
             (team-id (get-text-property (point) 'team-id))
             (room-id (get-text-property (point) 'room-id))
-            (thread-ts (get-text-property (point) 'thread-ts))
             (team (slack-team-find team-id)))
-      (slack-open-message
-       team
-       (slack-room-find room-id team)
-       (--find (s-matches-p "[0-9]" it) (list ts))
-       ;; found out that when a ts is nil, it comes "nil"
-       (--find (s-matches-p "[0-9]" it) (list thread-ts)))
+      (let ((thread-ts (get-text-property (point) 'thread-ts)))
+        (slack-open-message
+         team
+         (slack-room-find room-id team)
+         ts
+         thread-ts))
     (error "Not possible to jump to message")))
 (define-key slack-activity-feed-buffer-mode-map (kbd "RET") 'slack-activity-feed-open-message)
 
