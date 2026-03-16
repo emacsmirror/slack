@@ -27,8 +27,13 @@
 (require 'slack-util)
 (require 'slack-request)
 (require 'slack-team)
+(require 'slack-user)
+(require 'json)
 
 (defconst slack-usergroup-list-url "https://slack.com/api/usergroups.list")
+(defconst slack-usergroup-users-list-url "https://slack.com/api/usergroups.users.list")
+(defconst slack-usergroup-users-update-url "https://slack.com/api/usergroups.users.update")
+
 
 (defclass slack-usergroup ()
   ((id :initarg :id :type string)
@@ -92,6 +97,56 @@
 
 (cl-defmethod slack-usergroup-include-user-p ((this slack-usergroup) user-id)
   (cl-find user-id (oref this users) :test #'string=))
+
+(defun slack-usergroup-select (team)
+  "Select usergroup from TEAM."
+  (completing-read "Select Usergroup: "
+                   (--map (oref it handle) (oref team usergroups))
+                   nil
+                   'require-match))
+
+(defun slack-usergroup-users-list (usergroup-id team success-fn)
+  "List the USERGROUP-ID users for TEAM and act on them with SUCCESS-FN."
+  (slack-request
+   (slack-request-create
+    slack-usergroup-users-list-url
+    team
+    :success success-fn
+    :params (list (cons "usergroup" usergroup-id)))))
+
+(defun slack-usergroup-users-update (usergroup-id user-ids team success-fn)
+  "Set the USERGROUP-ID's USER-IDS for TEAM and act on result with SUCCESS-FN."
+  (slack-request
+   (slack-request-create
+    slack-usergroup-users-update-url
+    team
+    :success success-fn
+    :params (list (cons "usergroup" usergroup-id)
+                  (cons "users" (json-encode user-ids))))))
+
+(defun slack-usergroup-set-users (usergroup-id team)
+  "Update the USERGROUP-ID users for TEAM."
+  (interactive
+   (let ((team (slack-team-select)))
+     (list
+      (slack-usergroup-get-id (slack-usergroup-select team) team)
+      team)))
+  (slack-usergroup-users-list
+   usergroup-id team
+   (lambda (&rest data)
+     (let* ((current-users (plist-get (plist-get data :data) :users))
+            (prompt (lambda (loop-count)
+                      (concat
+                       (format "Original users: %s. "
+                               (--map (slack-user-name it team) current-users))
+                       (if (< 0 loop-count)
+                           "Select another user  (or leave empty): "
+                         "Select user: "))))
+            (users (slack-user-names team))
+            (users-to-set (mapcar #'(lambda (user) (plist-get user :id))
+                                  (slack-select-multiple prompt users))))
+       (slack-usergroup-users-update usergroup-id users-to-set team (lambda (&rest _args))))))
+  )
 
 (provide 'slack-usergroup)
 ;;; slack-usergroup.el ends here
