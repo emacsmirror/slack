@@ -32,6 +32,7 @@
 (require 'slack-image)
 (require 'slack-unescape)
 (require 'slack-file)
+(require 'slack-block)
 
 (defvar slack-attachment-action-keymap)
 (defvar slack-completing-read-function)
@@ -451,7 +452,7 @@
 
 (cl-defmethod slack-message-to-string ((attachment slack-attachment) team)
   (with-slots
-      (fallback text ts color from-url footer fields pretext actions files) attachment
+      (fallback text ts color from-url footer fields pretext actions files blocks) attachment
     (let* ((pad-raw (propertize "  | " 'face 'slack-attachment-pad))
            (pad (or (and color (propertize pad-raw 'face (list :foreground (concat "#" color))))
                     pad-raw))
@@ -460,6 +461,15 @@
                      (unless (slack-string-blankp h)
                        (concat pad h))))
            (pretext (and pretext (concat pad pretext)))
+           (blocks-body (when (and blocks (not (oref team disable-block-format)))
+                          (mapconcat #'(lambda (e) (concat pad e))
+                                     (split-string
+                                      (mapconcat #'(lambda (bl)
+                                                     (slack-block-to-string bl (list :team team)))
+                                                 blocks
+                                                 "\n\n")
+                                      "\n")
+                                     "\n")))
            (body (and text (mapconcat #'(lambda (e) (concat pad e))
                                       (split-string text "\n")
                                       "\n")))
@@ -510,6 +520,7 @@
                                                   (propertize pretext 'slack-text-type 'mrkdwn)
                                                 pretext))
                                  "")
+                             (or blocks-body "")
                              (or (and body (if (cl-find-if #'(lambda (e) (string= "text" e))
                                                            mrkdwn-in)
                                                (propertize body 'slack-text-type 'mrkdwn)
