@@ -40,6 +40,17 @@
   :type 'string
   :group 'slack)
 
+(defcustom slack-file-download-confirm t
+  "When non-nil, prompt for the destination path on every file download.
+When nil, save directly to `slack-file-dir' using the file's original name."
+  :type 'boolean
+  :group 'slack)
+
+(defcustom slack-file-download-open-dired t
+  "When non-nil, open dired at the download location after a successful download."
+  :type 'boolean
+  :group 'slack)
+
 (defvar slack-file-link-keymap
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'slack-file-display)
@@ -541,26 +552,40 @@
       :success #'success))))
 
 (cl-defmethod slack-file-download ((file slack-file) team)
-  "Download FILE at location for TEAM."
+  "Download FILE at location for TEAM.
+When `slack-file-download-confirm' is non-nil, prompt for the destination;
+otherwise save directly under `slack-file-dir' using the file's original name.
+Asks before overwriting an existing file. After a successful download, opens
+dired at the destination when `slack-file-download-open-dired' is non-nil."
   (slack-if-let*
       ((url (oref file url-private-download))
        (url-not-blank-p (not (slack-string-blankp url)))
        (filename (file-name-nondirectory url))
        (dir (expand-file-name slack-file-dir))
-       (user-path (read-file-name "Save as: " dir nil nil filename)))
-      (if (string-empty-p user-path)
-	  (error "Please provide a valid download path")
-	(make-directory (file-name-directory (expand-file-name user-path)) t)
-	(message "Slack file download started...")
-	(slack-url-copy-file url (expand-file-name user-path) team
+       (target (expand-file-name
+                (if slack-file-download-confirm
+                    (read-file-name "Save as: " dir nil nil filename)
+                  (expand-file-name filename dir)))))
+      (progn
+        (when (and (file-exists-p target)
+                   (not (yes-or-no-p (format "%s exists.  Overwrite? " target))))
+          (user-error "Slack file download aborted"))
+        (make-directory (file-name-directory target) t)
+        (message "Slack file download started...")
+        (slack-url-copy-file url target team
                              :token (slack-team-token team)
                              :cookie (slack-team-cookie team)
                              :success (lambda ()
-					(dired (file-name-directory (expand-file-name user-path)))
-					(revert-buffer-quick)
-					(goto-char (point-min))
-					(re-search-forward (file-name-nondirectory user-path) nil t)
-					(message "Slack file download started...Done"))))))
+                                        (when slack-file-download-open-dired
+                                          (dired (file-name-directory target))
+                                          (revert-buffer-quick)
+                                          (goto-char (point-min))
+                                          (re-search-forward (file-name-nondirectory target) nil t))
+                                        (message "Slack file download finished: %s" target))
+                             :error (lambda (&rest args)
+                                      (message "Slack file download FAILED for %s: %s"
+                                               target args)
+                                      (ding))))))
 
 (cl-defmethod slack-file-downloadable-p ((file slack-file))
   (not (slack-string-blankp (oref file url-private-download))))
