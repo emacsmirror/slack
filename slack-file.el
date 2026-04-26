@@ -560,7 +560,10 @@ dired at the destination when `slack-file-download-open-dired' is non-nil."
   (slack-if-let*
       ((url (oref file url-private-download))
        (url-not-blank-p (not (slack-string-blankp url)))
-       (filename (file-name-nondirectory url))
+       (filename (let ((name (oref file name)))
+                   (if (and name (not (slack-string-blankp name)))
+                       name
+                     (file-name-nondirectory url))))
        (dir (expand-file-name slack-file-dir))
        (target (expand-file-name
                 (if slack-file-download-confirm
