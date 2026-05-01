@@ -76,5 +76,10 @@ List of strings that will be passed to every curl invocation.
 You can pass extra options here, like setting the proxy."
   :type '(repeat string))
 
+(defcustom slack-emit-periodic-presence-p nil
+  "Emit active presence every 7s when set."
+  :type 'boolean
+  :group 'slack)
+
 (provide 'slack-defcustoms)
 ;;; slack-defcustoms.el ends here

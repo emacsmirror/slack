@@ -136,10 +136,16 @@ what is happening in your team."
                          ws-url)
                  team :level 'debug))))
 
+(defvar slack-presence-timers (make-hash-table :test 'equal)
+  "Keep track of the teams presence timers.
+Set when SLACK-EMIT-PERIODIC-PRESENCE-P is set.")
+
 (defun slack-ws-close ()
+  "Close websocket."
   (interactive)
   (mapc #'(lambda (team) (slack-ws--close (oref team ws) team t))
         (hash-table-values slack-teams-by-token))
+  (ignore-errors (mapcar 'cancel-timer (hash-table-values slack-presence-timers)))
   (slack-request-worker-quit))
 
 (cl-defun slack-ws--close (ws team &optional (close-reconnection nil))
@@ -938,6 +944,19 @@ all users, but for simplicity we take the first users."
     (slack-log "Queried first 499 users presence via RTT"
                team :level 'trace)))
 
+(defun slack-maybe-start-presence-timer (team)
+  "If SLACK-EMIT-PERIODIC-PRESENCE-P is t, every 7s we call set-presence for TEAM.
+That keeps the user active. It is clear this is a workaround, but it is
+easier than inject activity in each action the user is doing that
+represent activity."
+  (when (and
+         ;; the user wants the timer
+         slack-emit-periodic-presence-p
+         ;; the timer is not set already for the team
+         (not (gethash (oref team id) slack-presence-timers))
+         )
+    (puthash (oref team id) (run-with-timer 7 t 'slack-request-set-presence team "auto") slack-presence-timers)))
+
 (defun slack-authorize (team &optional error-callback success-callback)
   (let ((authorize-request (oref team authorize-request)))
     (if (and authorize-request (not (request-response-done-p authorize-request)))
@@ -976,7 +995,8 @@ all users, but for simplicity we take the first users."
                          (slack-download-emoji team #'on-emoji-download))
                        (slack-command-list-update team)
                        (slack-usergroup-list-update team)
-                       (slack-update-modeline)))
+                       (slack-update-modeline)
+                       (slack-maybe-start-presence-timer team)))
                   (let ((self (plist-get data :self))
                         (team-data (plist-get data :team)))
                     (oset team id (plist-get team-data :id))
