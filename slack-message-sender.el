@@ -46,6 +46,13 @@
 (defconst slack-special-mention-regex "\\(<!\\(here\\|channel\\|everyone\\)>\\)")
 (defconst slack-file-upload-complete-url "https://slack.com/api/files.completeUpload")
 
+(defun slack-list-indent-level (leading-space)
+  "Given a LEADING-SPACE we count how many indentation levels there are.
+In this context an indentation level is a pair of spaces."
+  (let* ((normalized (replace-regexp-in-string "\t" "  " leading-space))
+         (space-count (length normalized)))
+    (floor (/ space-count 2))))
+
 (cl-defun slack-message-send-internal (message room team &key (on-success nil) (on-error nil) (payload nil) (files nil) (joined nil))
   (when (slack-string-blankp message)
     (error "Empty message"))
@@ -306,7 +313,7 @@
                                  (string= "*" list-sign))
                              "bullet"
                            "ordered"))
-             (list-indent (length (match-string 1))))
+             (list-indent (slack-list-indent-level (match-string 1))))
         (slack-put-section-block-props (match-beginning 0)
                                        (match-end 0)
                                        (list :section-type 'list
@@ -506,6 +513,13 @@
                                           (setq end (1+ end))
                                           ))
                             (list (progn
+                                    ;; let's handle bulleted lists first
+                                    (when (and list-ranges
+                                               (or (not (string= list-style
+                                                                 (plist-get block-props :style)))
+                                                   (/= list-indent
+                                                       (plist-get block-props :indent))))
+                                      (commit-list-block))
                                     (commit-section-block)
                                     (commit-preformatted-block)
                                     (commit-blockquote-block)
