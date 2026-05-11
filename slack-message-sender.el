@@ -186,7 +186,14 @@ In this context an indentation level is a pair of spaces."
                                                      :type 'usergroup))
                                  (cl-remove-if #'slack-usergroup-deleted-p
                                                (oref team usergroups))))
-             (alist (append keyworkds (slack-user-names team) usergroups)))
+             (alist (append keyworkds
+                            ;; show on selection if user is active or not
+                            (slack-user-name-alist
+                             team
+                             :filter
+                             #'(lambda (users)
+                                 (cl-remove-if #'slack-user-hidden-p users)))
+                            usergroups)))
         (slack-select-from-list
             (alist "Select User: ")
             (cl-case (plist-get selected :type)
