@@ -81,5 +81,17 @@ You can pass extra options here, like setting the proxy."
   :type 'boolean
   :group 'slack)
 
+(defcustom slack-show-attachments-p t
+  "Show attachment if set.
+This variable exists as an attempt to stop preview links to display. It
+is a workaround because Slack previews are editing an existing message
+by adding an attachment.
+
+The problem with this approach is that is radical: this apply to all
+attachments instead of only the Slack previews, so a user may miss out
+useful information."
+  :type 'boolean
+  :group 'slack)
+
 (provide 'slack-defcustoms)
 ;;; slack-defcustoms.el ends here

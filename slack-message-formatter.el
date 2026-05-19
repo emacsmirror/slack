@@ -39,6 +39,7 @@
 (require 'slack-unescape)
 (require 'slack-bot-message)
 (require 'slack-message-faces)
+(require 'slack-defcustoms)
 
 (defvar slack-current-buffer)
 
@@ -86,7 +87,7 @@
   (let* ((header (slack-message-header m team))
          (attachment (mapconcat #'(lambda (attachment)
                                     (slack-message-to-string attachment team))
-                                (oref m attachments)
+                                (when slack-show-attachments-p (oref m attachments))
                                 "\n"))
          (body (format "%s%s"
                        (if (slack-message-display-thread-sign-p m team)
