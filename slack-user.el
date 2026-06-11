@@ -475,19 +475,21 @@ https://github.com/ErikKalkoken/slackApiDoc/blob/master/users.prefs.get.md"
       :type "GET"
       :success (cl-function
                 (lambda (&key data &allow-other-keys)
-                  (setf (oref team user-prefs)
-                        (let* ((prefs (plist-get data :prefs))
-                               (muted-channels
-                                (seq-map
-                                 (lambda (channel) (symbol-name (car channel)))
-                                 (seq-filter
-                                  (lambda (channel) (alist-get 'muted (cdr channel)))
-                                  (alist-get 'channels (json-parse-string
-                                                        (plist-get prefs :all_notifications_prefs)
-                                                        :object-type 'alist
-                                                        :array-type 'list
-                                                        :false-object nil))))))
-                          (map-insert prefs :muted_channels muted-channels)))))))))
+                  (slack-request-handle-error
+                   (data "slack-user-prefs-update")
+                   (setf (oref team user-prefs)
+                         (let* ((prefs (plist-get data :prefs))
+                                (muted-channels
+                                 (seq-map
+                                  (lambda (channel) (symbol-name (car channel)))
+                                  (seq-filter
+                                   (lambda (channel) (alist-get 'muted (cdr channel)))
+                                   (alist-get 'channels (json-parse-string
+                                                         (plist-get prefs :all_notifications_prefs)
+                                                         :object-type 'alist
+                                                         :array-type 'list
+                                                         :false-object nil))))))
+                           (map-insert prefs :muted_channels muted-channels))))))))))
 
 (provide 'slack-user)
 ;;; slack-user.el ends here
