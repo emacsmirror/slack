@@ -518,6 +518,8 @@ You need to install `language-detection' for this to work.")
                     (slack-create-rich-text-date-element payload))
                    ((string= "broadcast" type)
                     (slack-create-rich-text-broadcast-element payload))
+                   ((string= "message_mention" type)
+                    (slack-create-rich-text-message-mention-element payload))
                    (t
                     (make-instance 'slack-rich-text-element
                                    :type (plist-get payload :type)
@@ -645,6 +647,69 @@ You need to install `language-detection' for this to work.")
                  :type (plist-get payload :type)
                  :url (plist-get payload :url)
                  :text (plist-get payload :text)
+                 :style (slack-create-rich-text-element-style
+                         (plist-get payload :style))))
+
+(defclass slack-rich-text-message-mention-element (slack-rich-text-element)
+  ((url :initarg :url :type string)
+   (text :initarg :text :type (or null string) :initform nil)
+   (channel-id :initarg :channel_id :type (or null string) :initform nil)
+   (author-id :initarg :author_id :type (or null string) :initform nil)
+   (message-ts :initarg :message_ts :type (or null string) :initform nil)
+   (thread-ts :initarg :thread_ts :type (or null string) :initform nil)))
+
+(defvar slack-message-mention-keymap
+  (let ((keymap (make-sparse-keymap)))
+    (define-key keymap (kbd "RET") #'slack-open-message-mention-url)
+    (define-key keymap [mouse-1] #'slack-open-message-mention-url)
+    keymap))
+
+(defun slack-open-message-mention-url ()
+  "Open the message mention URL at point."
+  (interactive)
+  (let ((url (get-text-property (point) 'slack-message-mention-url)))
+    (when url
+      (slack-open-url url))))
+
+(cl-defmethod slack-block-to-string ((this slack-rich-text-message-mention-element) option)
+  (let* ((team (plist-get option :team))
+         (url (oref this url))
+         (author-name (when (and team (oref this author-id))
+                        (or (slack-user-name (oref this author-id) team)
+                            (oref this author-id))))
+         (channel-name (when (and team (oref this channel-id))
+                         (let ((room (slack-room-find (oref this channel-id) team)))
+                           (when room
+                             (slack-room-name room team)))))
+         (label (cond (author-name
+                       (if channel-name
+                           (format "@%s in #%s" author-name channel-name)
+                         (format "@%s" author-name)))
+                      (channel-name
+                       (format "#%s" channel-name))
+                      (t url))))
+    (propertize label
+                'face 'slack-channel-button-face
+                'slack-message-mention-url url
+                'keymap slack-message-mention-keymap
+                'help-echo (format "RET: open message\n%s" url))))
+
+(cl-defmethod slack-block-to-mrkdwn ((this slack-rich-text-message-mention-element) &optional _option)
+  (let ((text (oref this text))
+        (url (oref this url)))
+    (if text
+        (format "[%s](%s)" text url)
+      url)))
+
+(defun slack-create-rich-text-message-mention-element (payload)
+  (make-instance 'slack-rich-text-message-mention-element
+                 :type (plist-get payload :type)
+                 :url (plist-get payload :url)
+                 :text (plist-get payload :text)
+                 :channel_id (plist-get payload :channel_id)
+                 :author_id (plist-get payload :author_id)
+                 :message_ts (plist-get payload :message_ts)
+                 :thread_ts (plist-get payload :thread_ts)
                  :style (slack-create-rich-text-element-style
                          (plist-get payload :style))))
 

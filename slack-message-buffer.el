@@ -1116,7 +1116,7 @@ A way to use that is to select the right point of the buffer."
 (defun slack-open-message (team room ts thread-ts)
   "Open message or thread buffer from TEAM, ROOM, TS and THREAD-TS (the latter can be nil)."
   (cl-labels ((go-to-link-position ()
-                (slack-buffer-goto (or thread-ts ts))
+                (slack-buffer-goto ts)
                 (when (and
                        (not (equal ts (slack-get-ts)))
                        (not (equal thread-ts (slack-get-ts)))
