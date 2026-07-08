@@ -99,6 +99,8 @@ You need to install `language-detection' for this to work.")
       (slack-create-call-layout-block payload))
      ((string= "plan" type)
       (slack-create-plan-layout-block payload))
+     ((string= "table" type)
+      (slack-create-table-layout-block payload))
      (t (make-instance 'slack-layout-block
                        :type type
                        :payload payload))
@@ -269,6 +271,83 @@ You need to install `language-detection' for this to work.")
                  (cl-remove-if #'null
                                (append (list header) task-strs))
                  "\n"))))
+
+(defface slack-table-border-face
+  '((t (:foreground "#586e75")))
+  "Face used for table borders."
+  :group 'slack)
+
+(defface slack-table-header-face
+  '((t (:weight bold)))
+  "Face used for table header cells."
+  :group 'slack)
+
+(defclass slack-table-layout-block (slack-layout-block)
+  ((type :initarg :type :type string :initform "table")
+   (rows :initarg :rows :type list :initform nil)
+   (num-columns :initarg :num_columns :type (or null number) :initform nil)
+   (border :initarg :border :type (or null number) :initform nil)))
+
+(defun slack-create-table-layout-block (payload)
+  (make-instance 'slack-table-layout-block
+                 :type (plist-get payload :type)
+                 :block_id (plist-get payload :block_id)
+                 :rows (mapcar #'(lambda (row)
+                                   (mapcar #'slack-create-rich-text-block row))
+                                (plist-get payload :rows))
+                 :num_columns (plist-get payload :num_columns)
+                 :border (plist-get payload :border)
+                 :payload payload))
+
+(cl-defmethod slack-block-to-string ((this slack-table-layout-block) &optional option)
+  (with-slots (rows) this
+    (when (and rows (cl-every #'listp rows))
+      (let* ((rendered-rows (mapcar #'(lambda (row)
+                                        (mapcar #'(lambda (cell)
+                                                    (let ((s (slack-block-to-string cell option)))
+                                                      (or s "")))
+                                                  row))
+                                      rows))
+             (num-cols (apply #'max (mapcar #'length rendered-rows)))
+             (col-widths
+              (cl-loop for col from 0 below num-cols
+                       collect (apply #'max 1
+                                      (mapcar #'(lambda (row)
+                                                  (string-width
+                                                   (substring-no-properties (or (nth col row) ""))))
+                                                rendered-rows))))
+             (pad (lambda (s w)
+                    (let ((plain (substring-no-properties (or s ""))))
+                      (concat plain (make-string (max 0 (- w (string-width plain))) ? )))))
+             (border (propertize "|" 'face 'slack-table-border-face))
+             (hline (concat (propertize "+" 'face 'slack-table-border-face)
+                            (mapconcat #'(lambda (w)
+                                           (propertize (make-string (+ w 2) ?-)
+                                                       'face 'slack-table-border-face))
+                                         col-widths
+                                         (propertize "+" 'face 'slack-table-border-face))
+                            (propertize "+" 'face 'slack-table-border-face)))
+             (format-row #'(lambda (row header-p)
+                             (apply #'concat border
+                                     (cl-loop for col from 0 below num-cols
+                                              for w = (nth col col-widths)
+                                              for cell = (nth col row)
+                                              for padded = (funcall pad cell w)
+                                              collect (concat " "
+                                                              (if header-p
+                                                                  (propertize padded 'face 'slack-table-header-face)
+                                                                padded)
+                                                              " "
+                                                              border)))
+                                     )))
+        (concat hline "\n"
+                (funcall format-row (car rendered-rows) t) "\n"
+                hline "\n"
+                (mapconcat #'(lambda (row) (funcall format-row row nil))
+                           (cdr rendered-rows)
+                           (concat "\n"))
+                (when (cdr rendered-rows) "\n")
+                hline)))))
 
 (defclass slack-rich-text-block-element ()
   ((type :initarg :type :type string)
