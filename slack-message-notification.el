@@ -80,18 +80,38 @@ success.")
       (funcall slack-message-custom-notifier message room team)
     (slack-message-notify-alert message room team)))
 
+(defun slack-message--attachments-text (message team)
+  (mapconcat #'(lambda (a)
+                 (with-slots (text title pretext blocks) a
+                   (slack-unescape
+                    (mapconcat #'identity
+                               (cl-remove-if #'null
+                                             (list title pretext text
+                                                   (when blocks
+                                                     (mapconcat #'(lambda (bl)
+                                                                    (slack-block-to-string bl (list :team team)))
+                                                                blocks
+                                                                "\n\n"))))
+                               "\n")
+                    team)))
+             (oref message attachments)
+             "\n"))
+
 (defun slack-message-mentioned-p (message team)
   (and (not (slack-message-minep message team))
-       (let ((body (or (slack-message-body message team) "")))
+       (let* ((body (or (slack-message-body message team) ""))
+              (search-text (if (oref message attachments)
+                               (concat body "\n" (slack-message--attachments-text message team))
+                             body)))
          (or (string-match (format "@%s" (plist-get (oref team self) :name))
-                           body)
+                           search-text)
              (cl-find-if #'(lambda (usergroup)
                              (and (slack-usergroup-include-user-p
                                    usergroup
                                    (plist-get (oref team self) :id))
-                                  (string-match
-                                   (slack-format-usergroup usergroup)
-                                   body)))
+                                   (string-match
+                                    (format "!?subteam\\^%s" (oref usergroup id))
+                                    search-text)))
                          (oref team usergroups))))))
 
 
