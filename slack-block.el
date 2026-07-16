@@ -599,6 +599,8 @@ You need to install `language-detection' for this to work.")
                     (slack-create-rich-text-broadcast-element payload))
                    ((string= "message_mention" type)
                     (slack-create-rich-text-message-mention-element payload))
+                   ((string= "attachment_mention" type)
+                    (slack-create-rich-text-attachment-mention-element payload))
                    (t
                     (make-instance 'slack-rich-text-element
                                    :type (plist-get payload :type)
@@ -789,6 +791,65 @@ You need to install `language-detection' for this to work.")
                  :author_id (plist-get payload :author_id)
                  :message_ts (plist-get payload :message_ts)
                  :thread_ts (plist-get payload :thread_ts)
+                 :style (slack-create-rich-text-element-style
+                         (plist-get payload :style))))
+
+(defclass slack-rich-text-attachment-mention-element (slack-rich-text-element)
+  ((url :initarg :url :type (or null string) :initform nil)
+   (text :initarg :text :type (or null string) :initform nil)
+   (app-id :initarg :app_id :type (or null string) :initform nil)
+   (entity-id :initarg :entity_id :type (or null string) :initform nil)
+   (icon-url :initarg :icon_url :type (or null string) :initform nil)
+   (icon-name :initarg :icon_name :type (or null string) :initform nil)
+   (product-name :initarg :product_name :type (or null string) :initform nil)
+   (ts :initarg :ts :type (or null string) :initform nil)
+   (channel-id :initarg :channel_id :type (or null string) :initform nil)))
+
+(defvar slack-attachment-mention-keymap
+  (let ((keymap (make-sparse-keymap)))
+    (define-key keymap (kbd "RET") #'slack-open-attachment-mention-url)
+    (define-key keymap [mouse-1] #'slack-open-attachment-mention-url)
+    keymap))
+
+(defun slack-open-attachment-mention-url ()
+  "Browse the attachment mention URL at point."
+  (interactive)
+  (let ((url (get-text-property (point) 'slack-attachment-mention-url)))
+    (when url
+      (browse-url url))))
+
+(cl-defmethod slack-block-to-string ((this slack-rich-text-attachment-mention-element) &optional _option)
+  (let* ((url (oref this url))
+         (text (or (oref this text) url))
+         (product (oref this product-name))
+         (label (if product
+                    (format "%s: %s" product text)
+                  text)))
+    (propertize label
+                'face 'slack-channel-button-face
+                'slack-attachment-mention-url url
+                'keymap slack-attachment-mention-keymap
+                'help-echo (format "RET: open link\n%s" url))))
+
+(cl-defmethod slack-block-to-mrkdwn ((this slack-rich-text-attachment-mention-element) &optional _option)
+  (let ((text (oref this text))
+        (url (oref this url)))
+    (if text
+        (format "[%s](%s)" text url)
+      url)))
+
+(defun slack-create-rich-text-attachment-mention-element (payload)
+  (make-instance 'slack-rich-text-attachment-mention-element
+                 :type (plist-get payload :type)
+                 :url (plist-get payload :url)
+                 :text (plist-get payload :text)
+                 :app_id (plist-get payload :app_id)
+                 :entity_id (plist-get payload :entity_id)
+                 :icon_url (plist-get payload :icon_url)
+                 :icon_name (plist-get payload :icon_name)
+                 :product_name (plist-get payload :product_name)
+                 :ts (plist-get payload :ts)
+                 :channel_id (plist-get payload :channel_id)
                  :style (slack-create-rich-text-element-style
                          (plist-get payload :style))))
 
