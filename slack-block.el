@@ -139,7 +139,7 @@ You need to install `language-detection' for this to work.")
 
 (defclass slack-rich-text-block ()
   ((type :initarg :type :type string)
-   (block-id :initarg :block_id :type string)
+   (block-id :initarg :block_id :type (or string null) :initform nil)
    (elements :initarg :elements :type list) ;; list of slack-rich-text-section
    ))
 
