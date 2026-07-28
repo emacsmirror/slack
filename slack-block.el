@@ -601,6 +601,8 @@ You need to install `language-detection' for this to work.")
                     (slack-create-rich-text-message-mention-element payload))
                    ((string= "attachment_mention" type)
                     (slack-create-rich-text-attachment-mention-element payload))
+                   ((string= "canvas" type)
+                    (slack-create-rich-text-canvas-element payload))
                    (t
                     (make-instance 'slack-rich-text-element
                                    :type (plist-get payload :type)
@@ -850,6 +852,32 @@ You need to install `language-detection' for this to work.")
                  :product_name (plist-get payload :product_name)
                  :ts (plist-get payload :ts)
                  :channel_id (plist-get payload :channel_id)
+                 :style (slack-create-rich-text-element-style
+                         (plist-get payload :style))))
+
+(defclass slack-rich-text-canvas-element (slack-rich-text-element)
+  ((file-id :initarg :file_id :type (or null string) :initform nil)
+   (url :initarg :url :type (or null string) :initform nil)))
+
+(cl-defmethod slack-block-to-string ((this slack-rich-text-canvas-element) &optional _option)
+  (let ((url (oref this url)))
+    (propertize (or url "Canvas")
+                'face 'slack-channel-button-face
+                'slack-attachment-mention-url url
+                'keymap slack-attachment-mention-keymap
+                'help-echo (format "RET: open link\n%s" url))))
+
+(cl-defmethod slack-block-to-mrkdwn ((this slack-rich-text-canvas-element) &optional _option)
+  (let ((url (oref this url)))
+    (if url
+        (format "[%s](%s)" url url)
+      "Canvas")))
+
+(defun slack-create-rich-text-canvas-element (payload)
+  (make-instance 'slack-rich-text-canvas-element
+                 :type (plist-get payload :type)
+                 :file_id (plist-get payload :file_id)
+                 :url (plist-get payload :url)
                  :style (slack-create-rich-text-element-style
                          (plist-get payload :style))))
 
