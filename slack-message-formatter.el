@@ -121,6 +121,22 @@
   (let ((mode (oref file mode)))
     (string= mode "tombstone")))
 
+(defun slack-file-error-fallback (file team)
+  "Build a fallback string for FILE when `slack-file-summary' fails.
+Includes the file title, a link to open the file info buffer, and a
+download button when the file is downloadable."
+  (let ((title (ignore-errors (slack-file-title file)))
+        (file-id (ignore-errors (oref file id))))
+    (concat
+     "<slack-file-summary error>"
+     (when file-id
+       (concat ": "
+               (slack-file-link-info file-id
+                                    (or (and title (slack-unescape title team))
+                                        "untitled"))
+               (when (slack-file-downloadable-p file)
+                 (concat " " (slack-file-download-button file))))))))
+
 (cl-defmethod slack-file-summary ((file slack-file) _ts team)
   (if (slot-boundp file 'permalink)
       (with-slots (mode permalink) file
@@ -178,7 +194,7 @@
       (slack-file-hidden-by-limit-message this)
     (let ((body (or (ignore-errors
                       (slack-file-summary this ts team))
-                    "<slack-file-summary error>"))
+                    (slack-file-error-fallback this team)))
           (thumb (slack-image-string (slack-file-thumb-image-spec this))))
       (slack-format-message
        body

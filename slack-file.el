@@ -590,6 +590,11 @@ dired at the destination when `slack-file-download-open-dired' is non-nil."
                                                target args)
                                       (ding))))))
 
+(cl-defmethod slack-buffer-download-file ((this slack-buffer) file-id)
+  (slack-if-let* ((team (slack-buffer-team this))
+                  (file (slack-file-find file-id team)))
+      (slack-file-download file team)))
+
 (cl-defmethod slack-file-downloadable-p ((file slack-file))
   (not (slack-string-blankp (oref file url-private-download))))
 
