@@ -131,6 +131,14 @@
 (cl-defmethod slack-buffer-team ((this slack-buffer))
   (slack-team-find (oref this team-id)))
 
+(declare-function slack-file-find "slack-file")
+(declare-function slack-file-download "slack-file")
+
+(cl-defmethod slack-buffer-download-file ((this slack-buffer) file-id)
+  (slack-if-let* ((team (slack-buffer-team this))
+                  (file (slack-file-find file-id team)))
+      (slack-file-download file team)))
+
 (cl-defmethod slack-team-set-buffer ((this slack-buffer))
   (let* ((key (slack-buffer-key this))
          (team (slack-buffer-team this))
@@ -285,7 +293,7 @@
   (slack-buffer-cant-execute this))
 (cl-defmethod slack-buffer-room ((this slack-buffer))
   (slack-buffer-cant-execute this))
-(cl-defmethod slack-buffer-execute-button-block-action((this slack-buffer))
+(cl-defmethod slack-buffer-execute-button-block-action ((this slack-buffer))
   (slack-buffer-cant-execute this))
 (cl-defmethod slack-buffer-execute-conversation-select-block-action ((this slack-buffer))
   (slack-buffer-cant-execute this))
