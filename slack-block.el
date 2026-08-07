@@ -101,6 +101,8 @@ You need to install `language-detection' for this to work.")
       (slack-create-plan-layout-block payload))
      ((string= "table" type)
       (slack-create-table-layout-block payload))
+     ((string= "timeline" type)
+      (slack-create-timeline-layout-block payload))
      (t (make-instance 'slack-layout-block
                        :type type
                        :payload payload))
@@ -347,7 +349,71 @@ You need to install `language-detection' for this to work.")
                            (cdr rendered-rows)
                            (concat "\n"))
                 (when (cdr rendered-rows) "\n")
-                hline)))))
+                 hline)))))
+
+(defface slack-timeline-point-complete-face
+  '((t (:foreground "#859900")))
+  "Face for completed timeline points."
+  :group 'slack)
+
+(defface slack-timeline-point-in-progress-face
+  '((t (:foreground "#b58900")))
+  "Face for in-progress timeline points."
+  :group 'slack)
+
+(defface slack-timeline-point-pending-face
+  '((t (:foreground "#586e75")))
+  "Face for pending timeline points."
+  :group 'slack)
+
+(defclass slack-timeline-point ()
+  ((id :initarg :id :type (or null string) :initform nil)
+   (text :initarg :text :type (or null string) :initform nil)
+   (status :initarg :status :type (or null string) :initform nil)
+   (contents :initarg :contents :type (or null list) :initform nil)
+   (icon :initarg :icon :type (or null string) :initform nil)))
+
+(defun slack-create-timeline-point (payload)
+  (make-instance 'slack-timeline-point
+                 :id (plist-get payload :id)
+                 :text (plist-get payload :text)
+                 :status (plist-get payload :status)
+                 :contents (plist-get payload :contents)
+                 :icon (plist-get payload :icon)))
+
+(cl-defmethod slack-block-to-string ((this slack-timeline-point) &optional _option)
+  (with-slots (text status) this
+    (let ((marker (cond ((string= "complete" status)
+                         (propertize "✓" 'face 'slack-timeline-point-complete-face))
+                        ((string= "in_progress" status)
+                         (propertize "◐" 'face 'slack-timeline-point-in-progress-face))
+                        (t (propertize "○" 'face 'slack-timeline-point-pending-face)))))
+      (format "  %s %s" marker (or text "")))))
+
+(defclass slack-timeline-layout-block (slack-layout-block)
+  ((type :initarg :type :type string :initform "timeline")
+   (points :initarg :points :type list :initform nil)
+   (start-ts :initarg :start_ts :type (or null number) :initform nil)
+   (end-ts :initarg :end_ts :type (or null number) :initform nil)))
+
+(defun slack-create-timeline-layout-block (payload)
+  (make-instance 'slack-timeline-layout-block
+                 :type (plist-get payload :type)
+                 :block_id (plist-get payload :block_id)
+                 :points (mapcar #'slack-create-timeline-point
+                                 (plist-get payload :points))
+                 :start_ts (plist-get payload :start_ts)
+                 :end_ts (plist-get payload :end_ts)
+                 :payload payload))
+
+(cl-defmethod slack-block-to-string ((this slack-timeline-layout-block) &optional option)
+  (with-slots (points) this
+    (if points
+        (concat (mapconcat #'(lambda (point) (slack-block-to-string point option))
+                            points
+                            "\n")
+                "\n")
+      "")))
 
 (defclass slack-rich-text-block-element ()
   ((type :initarg :type :type string)
@@ -603,6 +669,8 @@ You need to install `language-detection' for this to work.")
                     (slack-create-rich-text-attachment-mention-element payload))
                    ((string= "canvas" type)
                     (slack-create-rich-text-canvas-element payload))
+                   ((string= "citation" type)
+                    (slack-create-rich-text-citation-element payload))
                    (t
                     (make-instance 'slack-rich-text-element
                                    :type (plist-get payload :type)
@@ -878,6 +946,81 @@ You need to install `language-detection' for this to work.")
                  :type (plist-get payload :type)
                  :file_id (plist-get payload :file_id)
                  :url (plist-get payload :url)
+                 :style (slack-create-rich-text-element-style
+                         (plist-get payload :style))))
+
+(defclass slack-rich-text-citation-element (slack-rich-text-element)
+  ((text :initarg :text :type (or null string) :initform nil)
+   (url :initarg :url :type (or null string) :initform nil)
+   (index :initarg :index :type (or null number) :initform nil)
+   (details :initarg :details :type (or null list) :initform nil)))
+
+(defvar slack-citation-keymap
+  (let ((keymap (make-sparse-keymap)))
+    (define-key keymap (kbd "RET") #'slack-open-citation)
+    (define-key keymap [mouse-1] #'slack-open-citation)
+    (define-key keymap (kbd "w") #'slack-copy-citation-url)
+    keymap))
+
+(defun slack-copy-citation-url ()
+  "Copy the citation URL at point to the kill ring."
+  (interactive)
+  (let ((url (get-text-property (point) 'slack-message-mention-url)))
+    (when url
+      (kill-new url)
+      (message "Copied: %s" url))))
+
+(defun slack-open-citation ()
+  "Open the citation message at point."
+  (interactive)
+  (let ((url (get-text-property (point) 'slack-message-mention-url))
+        (channel-id (get-text-property (point) 'slack-citation-channel-id))
+        (message-ts (get-text-property (point) 'slack-citation-message-ts)))
+    (if (and channel-id message-ts)
+        (cl-block nil
+          (let* ((team (cl-find-if
+                        #'(lambda (t)
+                            (slack-room-find channel-id t))
+                        (hash-table-values slack-teams-by-token))))
+            (when team
+              (let ((room (slack-room-find channel-id team)))
+                (when room
+                  (slack-open-message team room message-ts nil)
+                  (cl-return t)))))
+          (when url (browse-url url)))
+      (when url (browse-url url)))))
+
+(cl-defmethod slack-block-to-string ((this slack-rich-text-citation-element) &optional _option)
+  (let ((url (oref this url))
+        (text (or (oref this text) ""))
+        (details (oref this details))
+        (channel-id nil)
+        (message-ts nil))
+    (when details
+      (setq channel-id (plist-get details :channel)
+            message-ts (plist-get details :message_ts)))
+    (propertize text
+                'face 'slack-channel-button-face
+                'slack-message-mention-url url
+                'slack-citation-channel-id channel-id
+                'slack-citation-message-ts message-ts
+                'keymap slack-citation-keymap
+                'help-echo (format "RET: open message\n%s" url))))
+
+(cl-defmethod slack-block-to-mrkdwn ((this slack-rich-text-citation-element) &optional _option)
+  (let ((text (oref this text))
+        (url (oref this url)))
+    (if (and text url)
+        (format "[%s](%s)" text url)
+      (or text url ""))))
+
+(defun slack-create-rich-text-citation-element (payload)
+  (make-instance 'slack-rich-text-citation-element
+                 :type (plist-get payload :type)
+                 :text (plist-get payload :text)
+                 :url (plist-get payload :url)
+                 :index (plist-get payload :index)
+                 :details (plist-get payload :details)
                  :style (slack-create-rich-text-element-style
                          (plist-get payload :style))))
 
