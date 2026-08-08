@@ -979,8 +979,8 @@ You need to install `language-detection' for this to work.")
     (if (and channel-id message-ts)
         (cl-block nil
           (let* ((team (cl-find-if
-                        #'(lambda (t)
-                            (slack-room-find channel-id t))
+                        #'(lambda (team)
+                            (slack-room-find channel-id team))
                         (hash-table-values slack-teams-by-token))))
             (when team
               (let ((room (slack-room-find channel-id team)))
