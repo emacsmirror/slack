@@ -103,6 +103,8 @@ You need to install `language-detection' for this to work.")
       (slack-create-table-layout-block payload))
      ((string= "timeline" type)
       (slack-create-timeline-layout-block payload))
+     ((string= "video" type)
+      (slack-create-video-layout-block payload))
      (t (make-instance 'slack-layout-block
                        :type type
                        :payload payload))
@@ -414,6 +416,70 @@ You need to install `language-detection' for this to work.")
                             "\n")
                 "\n")
       "")))
+
+(defface slack-video-block-title-face
+  '((t (:weight bold)))
+  "Face for video block title."
+  :group 'slack)
+
+(defface slack-video-block-meta-face
+  '((t (:foreground "#586e75")))
+  "Face for video block metadata."
+  :group 'slack)
+
+(defclass slack-video-layout-block (slack-layout-block)
+  ((type :initarg :type :type string :initform "video")
+   (video-url :initarg :video_url :type (or null string) :initform nil)
+   (thumbnail-url :initarg :thumbnail_url :type (or null string) :initform nil)
+   (alt-text :initarg :alt_text :type (or null string) :initform nil)
+   (title :initarg :title :type (or null slack-text-message-composition-object) :initform nil)
+   (title-url :initarg :title_url :type (or null string) :initform nil)
+   (author-name :initarg :author_name :type (or null string) :initform nil)
+   (provider-name :initarg :provider_name :type (or null string) :initform nil)
+   (provider-icon-url :initarg :provider_icon_url :type (or null string) :initform nil)
+   (description :initarg :description :type (or null slack-text-message-composition-object) :initform nil)))
+
+(defun slack-create-video-layout-block (payload)
+  (make-instance 'slack-video-layout-block
+                 :type (plist-get payload :type)
+                 :block_id (plist-get payload :block_id)
+                 :video_url (plist-get payload :video_url)
+                 :thumbnail_url (plist-get payload :thumbnail_url)
+                 :alt_text (plist-get payload :alt_text)
+                 :title (slack-create-text-message-composition-object
+                         (plist-get payload :title))
+                 :title_url (plist-get payload :title_url)
+                 :author_name (plist-get payload :author_name)
+                 :provider_name (plist-get payload :provider_name)
+                 :provider_icon_url (plist-get payload :provider_icon_url)
+                 :description (slack-create-text-message-composition-object
+                               (plist-get payload :description))
+                 :payload payload))
+
+(cl-defmethod slack-block-to-string ((this slack-video-layout-block) &optional _option)
+  (with-slots (video-url title title-url author-name provider-name description alt-text) this
+    (let* ((title-str (when title (slack-block-to-string title)))
+           (desc-str (when description (slack-block-to-string description)))
+           (parts (cl-remove-if #'null
+                     (list (when title-str
+                             (propertize title-str 'face 'slack-video-block-title-face))
+                           (when author-name
+                             (propertize (format "by %s" author-name)
+                                         'face 'slack-video-block-meta-face))
+                           (when provider-name
+                             (propertize (format "on %s" provider-name)
+                                         'face 'slack-video-block-meta-face))
+                           (when desc-str
+                             (propertize desc-str 'face 'slack-video-block-meta-face))
+                           (when (or title-url video-url)
+                             (propertize "[video]"
+                                         'face 'slack-channel-button-face
+                                         'slack-attachment-mention-url (or title-url video-url)
+                                         'keymap slack-attachment-mention-keymap
+                                         'help-echo "RET: open video"))))))
+      (if parts
+          (concat (mapconcat #'identity parts " · ") "\n")
+        ""))))
 
 (defclass slack-rich-text-block-element ()
   ((type :initarg :type :type string)
