@@ -502,14 +502,20 @@ it does a call for each type and `slack-conversation-list' doesn't do more than 
                                             (sync nil))
   (let ((channel (oref room id)))
     (cl-labels
-        ((callback (messages next-cursor)
+        ((callback (messages next-cursor has-more)
            (when (functionp after-success)
              (funcall after-success
                       messages
-                      next-cursor)))
+                      next-cursor
+                      has-more)))
          (success (data)
            (let* ((meta (plist-get data :response_metadata))
                   (next-cursor (or (plist-get meta :next_cursor) ""))
+                  ;; `has_more' answers "is there more inside the window I
+                  ;; asked for?", not "does the channel have older messages?".
+                  ;; So when we pass both OLDEST and LATEST and get nil back,
+                  ;; we know that whole window is now loaded.
+                  (has-more (eq t (plist-get data :has_more)))
                   (messages (cl-loop for e in (plist-get data :messages)
                                      collect (slack-message-create e team room)))
                   (user-ids (slack-team-missing-user-ids
@@ -519,8 +525,8 @@ it does a call for each type and `slack-conversation-list' doesn't do more than 
                  (slack-user-info-request
                   user-ids team
                   :after-success #'(lambda ()
-                                     (callback messages next-cursor)))
-               (callback messages next-cursor)))))
+                                     (callback messages next-cursor has-more)))
+               (callback messages next-cursor has-more)))))
       (slack-request
        (slack-request-create
         slack-conversations-history-url
