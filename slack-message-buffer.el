@@ -254,7 +254,7 @@ and forces recomputation of load-more placeholders next time.
                     (slack-buffer-insert this m not-tracked-p prev-message)
                     (setq prev-message m)))
       (when latest-message
-        (slack-buffer-update-lastest this (slack-ts latest-message)))
+        (slack-buffer-update-latest this (slack-ts latest-message)))
       (when oldest-message
         (slack-buffer-update-oldest this oldest-message)))))
 
@@ -275,7 +275,7 @@ belong to a different block, on the other side of a gap."
   (slack-if-let* ((oldest (car messages)))
       (slack-buffer-update-oldest this oldest))
   (slack-if-let* ((latest (car (last messages))))
-      (slack-buffer-update-lastest this (slack-ts latest))))
+      (slack-buffer-update-latest this (slack-ts latest))))
 
 (cl-defmethod slack-buffer-insert-gap ((_this slack-message-buffer) top bottom)
   "Draw the marker for the hole between messages TOP and BOTTOM."
@@ -358,7 +358,7 @@ the buffer in place would be more work than starting over."
                                                        (slack-buffer-team this))))
     (slack-buffer-display buf)))
 
-(cl-defmethod slack-buffer-update-lastest ((this slack-message-buffer) latest)
+(cl-defmethod slack-buffer-update-latest ((this slack-message-buffer) latest)
   (with-slots ((prev-latest latest)) this
     (if (or (null prev-latest)
             (string< prev-latest latest))
@@ -1306,42 +1306,110 @@ Run AFTER-SUCCESS once both are in."
                                  :after-success #'older-done)))
 
 (defun slack-open-message (team room ts thread-ts)
-  "Open message or thread buffer from TEAM, ROOM, TS and THREAD-TS (the latter can be nil)."
-  (cl-labels ((go-to-link-position ()
-                (slack-buffer-goto (or thread-ts ts))
-                (when (and
-                       (not (equal ts (slack-get-ts)))
-                       (not (equal thread-ts (slack-get-ts)))
-                       slack-open-message-with-browser
-                       )
-                  (message "slack-open-message: message not available in emacs-slack buffer browsing permalink...")
-                  (browse-url
-                   (slack-info-to-permalink
-                    (list
-                     :team-domain (oref team name)
-                     :room-id (oref room id)
-                     :ts ts
-                     :thread-ts thread-ts)))))
-              (show-loaded-message ()
-                ;; the room grew a whole new block of history, so the buffer
-                ;; has to be drawn again before we can jump into it
-                (slack-if-let* ((buffer (slack-buffer-find 'slack-message-buffer
-                                                           team room)))
-                    (slack-buffer-redraw buffer))
-                (go-to-link-position))
-              (on-room-displayed ()
-                ;; Ask whether TS falls inside a loaded block, not whether the
-                ;; message is in the store: the buffer only draws messages that
-                ;; belong to a block, and the store can hold stragglers from
-                ;; elsewhere (thread replies, say) that are drawn nowhere.
-                (if (slack-ranges-contain-p (slack-room-ranges room) ts)
-                    (go-to-link-position)
-                  ;; TS is outside what we loaded: fetch a window around it
-                  (slack-load-message-window ts room team #'show-loaded-message))))
-    (if-let ((thread-message (and (not (slack-im-p room)) (ignore-errors (slack-room-find-message room thread-ts)))))
-        ;; TODO handle missing ts also in threads: not sure where that would be: conversation.replies channel, thread-ts
-        (slack-thread-show-messages thread-message room team #'go-to-link-position)
-      (slack-room-display room team #'on-room-displayed))))
+  "Open the buffer holding TS in ROOM of TEAM and put the cursor on it.
+THREAD-TS is the timestamp of the thread root, or nil when TS is not in a
+thread.  Which message we can actually land on depends on the buffer: a thread
+buffer holds the reply itself, while the channel buffer only ever holds the
+thread root, since Slack keeps replies out of the channel history."
+  (cl-labels
+      ((go-to (target)
+         (slack-buffer-goto target)
+         (when (and
+                (not (equal ts (slack-get-ts)))
+                (not (equal thread-ts (slack-get-ts)))
+                slack-open-message-with-browser
+                )
+           (message "slack-open-message: message not available in emacs-slack buffer browsing permalink...")
+           (browse-url
+            (slack-info-to-permalink
+             (list
+              :team-domain (oref team name)
+              :room-id (oref room id)
+              :ts ts
+              :thread-ts thread-ts)))))
+       (go-to-reply () (go-to ts))
+       (go-to-root () (go-to (or thread-ts ts)))
+       (show-loaded-message ()
+         ;; the room grew a whole new block of history, so the buffer
+         ;; has to be drawn again before we can jump into it
+         (slack-if-let* ((buffer (slack-buffer-find 'slack-message-buffer
+                                                    team room)))
+             (slack-buffer-redraw buffer))
+         (message "Jumped to message in %s" (slack-room-name room team))
+         (go-to-root))
+       (on-room-displayed ()
+         ;; Ask whether the target falls inside a loaded block, not whether the
+         ;; message is in the store: the buffer only draws messages that belong
+         ;; to a block, and the store can hold stragglers from elsewhere
+         ;; (thread replies, say) that are drawn nowhere.
+         (let ((target (or thread-ts ts)))
+           (if (slack-ranges-contain-p (slack-room-ranges room) target)
+               (go-to-root)
+             ;; target not loaded: fetch around it in the background
+             (message "Fetching messages around %s in %s..."
+                      ts (slack-room-name room team))
+             (slack-load-message-window target room team #'show-loaded-message))))
+       (threaded-p (root)
+         ;; Callers such as the stars buffer pass a message's own timestamp as
+         ;; THREAD-TS, so a THREAD-TS alone does not mean there is a thread.
+         ;; Either the root says so, or the link points at something other than
+         ;; the root, which only happens for a reply.
+         (or (slack-thread-ts root)
+             (not (equal ts thread-ts))))
+       (on-thread-fetched (messages _next-cursor has-more)
+         (slack-if-let* ((root (slack-room-find-message room thread-ts))
+                         (thread (threaded-p root)))
+             (progn
+               ;; The thread buffer draws the root's `replies' slot, so having
+               ;; the messages in the room is not enough: the root has to be
+               ;; told which of them are its replies.
+               (slack-message-set-replies room thread-ts messages)
+               (slack-buffer-display
+                (slack-create-thread-message-buffer room team thread-ts has-more))
+               (message "Jumped to reply in %s" (slack-room-name room team))
+               (go-to-reply))
+           (slack-room-display room team #'on-room-displayed)))
+       (fetch-thread ()
+         ;; The root is not in the store, so `slack-thread-show-messages' has
+         ;; nothing to start from.  conversations.replies takes a bare
+         ;; timestamp and answers with the root first and its replies after, so
+         ;; it reaches a thread of any age without touching channel history.
+         (message "Fetching thread in %s..." (slack-room-name room team))
+         (slack-conversations-replies
+          room thread-ts team
+          :after-success #'(lambda (messages next-cursor has-more)
+                             (slack-room-set-messages room messages team)
+                             (on-thread-fetched messages next-cursor has-more)))))
+    (let ((root (and thread-ts
+                     (ignore-errors (slack-room-find-message room thread-ts)))))
+      (cond ((and root (threaded-p root))
+             (slack-thread-show-messages root room team #'go-to-reply))
+            ((and thread-ts (null root))
+             (fetch-thread))
+            (t
+             ;; If the target is already loaded, just display and jump.
+             ;; If not, skip the newest-page fetch that `slack-room-display'
+             ;; would do (it is wasted because we redraw anyway) and load
+             ;; around the target directly.  Create an empty buffer first so
+             ;; the user sees something instead of a frozen activity buffer.
+             (let ((target (or thread-ts ts)))
+               (cond ((slack-ranges-contain-p (slack-room-ranges room) target)
+                      (slack-room-display room team #'on-room-displayed))
+                     ((slack-buffer-find 'slack-message-buffer team room)
+                      ;; buffer exists but target not loaded: fetch around it
+                      (message "Fetching messages around %s in %s..."
+                               ts (slack-room-name room team))
+                      (slack-load-message-window target room team
+                                                  #'show-loaded-message))
+                     (t
+                      ;; no buffer and target not loaded: create an empty one,
+                      ;; then fetch around the target in the background
+                      (message "Fetching messages around %s in %s..."
+                               ts (slack-room-name room team))
+                      (slack-buffer-display
+                       (slack-create-message-buffer room "" team))
+                      (slack-load-message-window target room team
+                                                  #'show-loaded-message)))))))))
 
 (defun slack-quote-and-reply (quote)
   "Prefix QUOTE to reply if region active on a slack message."

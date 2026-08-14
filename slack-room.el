@@ -221,7 +221,11 @@
 ;; them correctly and is used throughout.
 
 (defun slack-ranges-normalize (ranges)
-  "Sort RANGES oldest first and merge any that overlap or touch."
+  "Sort RANGES oldest first and merge any that overlap or touch.
+
+>> (slack-ranges-normalize (list '(\"d\" . \"e\") '(\"a\" . \"b\")))
+=> ((\"a\" . \"b\") (\"d\" . \"e\"))"
+
   (let ((sorted (cl-sort (cl-remove-if #'null (copy-sequence ranges))
                          #'string< :key #'car))
         (ret '()))
@@ -236,24 +240,37 @@
     (nreverse ret)))
 
 (defun slack-ranges-add (ranges oldest latest)
-  "Return RANGES with the block running from OLDEST to LATEST merged in."
-  (if (or (null oldest) (null latest))
-      (slack-ranges-normalize ranges)
-    (let ((lo (if (string< latest oldest) latest oldest))
-          (hi (if (string< latest oldest) oldest latest)))
-      (slack-ranges-normalize (cons (cons lo hi) ranges)))))
+  "Return RANGES with the block running from OLDEST to LATEST merged in.
+
+>> (slack-ranges-add '((\"e\" . \"f\")) \"a\" \"d\")
+=> ((\"a\" . \"d\") (\"e\" . \"f\"))"
+  (slack-ranges-normalize
+   (if (or (null oldest) (null latest))
+       ranges
+     (let ((lo (if (string< latest oldest) latest oldest))
+           (hi (if (string< latest oldest) oldest latest)))
+       (cons (cons lo hi) ranges)))))
 
 (defun slack-ranges-gaps (ranges)
   "Return the holes between RANGES as a list of (TOP-TS . BOTTOM-TS).
 TOP-TS is the newest message we have before the hole and BOTTOM-TS the oldest
-message we have after it, so the missing messages lie strictly between them."
+message we have after it, so the missing messages lie strictly between them.
+
+>> (slack-ranges-gaps '((\"a\" . \"d\") (\"f\" . \"g\")))
+=> ((\"d\" . \"f\"))"
   (cl-loop for rest on (slack-ranges-normalize ranges)
            while (cdr rest)
-           collect (cons (cdr (car rest))
-                         (car (cadr rest)))))
+           collect (cons (cdar rest)
+                         (caadr rest))))
 
 (defun slack-ranges-contain-p (ranges ts)
-  "Return non-nil when TS falls inside one of RANGES."
+  "Return non-nil when TS falls inside one of RANGES.
+
+>> (slack-ranges-contain-p '((\"a\" . \"e\")) \"d\")
+=> (\"a\" . \"e\")
+
+>> (slack-ranges-contain-p '((\"a\" . \"e\")) \"z\")
+=> nil"
   (cl-find-if #'(lambda (range)
                   (and (not (string< ts (car range)))
                        (not (string< (cdr range) ts))))
@@ -262,7 +279,10 @@ message we have after it, so the missing messages lie strictly between them."
 (defun slack-ranges-clip (ranges oldest-kept)
   "Return RANGES with everything older than OLDEST-KEPT removed.
 Call this after dropping old messages from the store, otherwise the ranges
-would claim we still have history that we just threw away."
+would claim we still have history that we just threw away.
+
+>> (slack-ranges-clip '((\"a\" . \"c\") (\"e\" . \"d\")) \"b\")
+=> ((\"b\" . \"c\") (\"e\" . \"d\"))"
   (when oldest-kept
     (cl-loop for range in (slack-ranges-normalize ranges)
              ;; whole block is older than what we kept: forget it
