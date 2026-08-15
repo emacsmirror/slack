@@ -8,6 +8,7 @@
 (require 'slack-message-sender)
 (require 'slack-image)
 (require 'slack-message-buffer)
+(require 'slack-export)
 
 (defvar slack-channel-button-keymap nil)
 (setq slack-render-image-p t)
@@ -1219,6 +1220,53 @@ thread buffer draws the root and the separator and nothing else."
             (should (equal reply-ts (slack-get-ts))))
         (ert-fail "no thread buffer was created"))
       (should (null browsed)))))
+
+(ert-deftest slack-test-export-indents-loaded-thread-replies ()
+  "The flattened export keeps roots and indents their loaded replies."
+  (slack-test-setup
+    (let* ((root-ts (slack-test-ts 1))
+           (reply-ts (slack-test-ts 2))
+           (root (slack-test-message team channel root-ts "root" root-ts))
+           (reply (slack-test-message team channel reply-ts "reply" root-ts)))
+      (slack-room-set-messages channel (list root reply) team)
+      (slack-message-set-replies channel root-ts (list reply))
+      (with-temp-buffer
+        (slack-export--insert-room channel team)
+        (let ((text (buffer-string)))
+          (should (string-match-p "root" text))
+          (should (string-match-p "^  .*reply" text))
+          (should (not (string-match-p "^  .*root" text))))))))
+
+(ert-deftest slack-test-export-fetches-thread-pages ()
+  "The exporter follows every conversations.replies cursor."
+  (slack-test-setup
+    (let* ((root-ts (slack-test-ts 1))
+           (reply-one-ts (slack-test-ts 2))
+           (reply-two-ts (slack-test-ts 3))
+           (root (slack-test-message team channel root-ts "root" root-ts))
+           (reply-one (slack-test-message team channel reply-one-ts
+                                          "reply one" root-ts))
+           (reply-two (slack-test-message team channel reply-two-ts
+                                          "reply two" root-ts))
+           (calls 0))
+      (oset root reply-count 2)
+      (slack-room-set-messages channel (list root) team)
+      (cl-letf (((symbol-function 'slack-conversations-replies)
+                 (lambda (room ts team &rest args)
+                   (cl-incf calls)
+                   (funcall (plist-get args :after-success)
+                            (if (= calls 1)
+                                (list root reply-one)
+                              (list reply-two))
+                            (and (= calls 1) "page-2")
+                            (= calls 1)))))
+        (slack-export--fetch-thread
+         root channel team
+         (lambda ()
+           (should (= 2 calls))
+           (should (equal (list reply-one-ts reply-two-ts)
+                          (oref root replies))))))
+      (should (= 2 calls)))))
 
 (if noninteractive
     (ert-run-tests-batch-and-exit)

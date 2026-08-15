@@ -19,6 +19,8 @@ GNU Emacs client for Slack. Plain Emacs Lisp, `lexical-binding: t`, built on
 - `slack-thread-message-buffer.el` — thread buffer; renders the root's `replies`
   slot, not the room store, so the root must be told its replies via
   `slack-message-set-replies` after a fetch.
+- `slack-export.el` — read-only flattened room snapshots with indented replies;
+  missing replies are paginated into the room store before export.
 - `slack-block.el` — Slack Block Kit rendering (large; see `split-block-plan.md`
   for a proposed split).
 - `test/run-test.el` — ERT suite. Helpers: `slack-test-ts`, `slack-test-range`,
@@ -71,3 +73,6 @@ warnings, not eliminate the old ones.
 - Network paths are tested by stubbing `slack-conversations-history` /
   `slack-conversations-replies` / `browse-url` with `cl-letf`, not by hitting
   the API. See `slack-test-open-message-loads-missing-thread`.
+- Keep modules roughly under 500 lines. If a file grows beyond that or becomes
+  noticeably larger than a clean, cohesive Elisp module, propose a split or
+  refactor before adding more unrelated functionality.

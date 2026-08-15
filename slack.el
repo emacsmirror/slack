@@ -60,6 +60,7 @@
 (require 'slack-buffer)
 (require 'slack-room-info-buffer)
 (require 'slack-message-buffer)
+(require 'slack-export)
 (require 'slack-message-edit-buffer)
 (require 'slack-message-share-buffer)
 (require 'slack-thread-message-buffer)
