@@ -217,7 +217,7 @@
                           (message (slack-room-find-message room ts)))
               (display-thread message)
             (cl-labels
-                ((success (messages _next-cursor)
+                ((success (messages _next-cursor &optional _has-more)
                           (slack-room-set-messages room messages team)
                           (let ((message (slack-room-find-message room (slack-ts root))))
                             (display-thread message))))

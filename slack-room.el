@@ -50,6 +50,9 @@
    (unread-count-display :initarg :unread_count_display :initform 0 :type integer)
    (message-ids :initform '() :type list)
    (messages :initform (make-hash-table :test 'equal :size 300))
+   ;; See "Message ranges" below.
+   (message-ranges :initform '() :type list)
+   (history-start-reached :initform nil)
    (last-read :initarg :last_read :type string :initform "0")
    (topic :initarg :topic :initform nil)))
 
@@ -177,6 +180,184 @@
 (cl-defmethod slack-room--update-latest ((this slack-room) counts ts)
   (slack-counts-channel-update-latest counts this ts))
 
+;;; Message ranges
+;;
+;; WHY THIS EXISTS, IN PLAIN WORDS
+;;
+;; `messages' is a bag of messages keyed by timestamp.  A bag cannot tell you
+;; whether two messages are neighbours in the channel or have ten thousand
+;; unloaded messages between them.  That is fine while we only ever load the
+;; newest page and then page backwards, but as soon as the user jumps to an old
+;; message (from search, say) the bag holds islands:
+;;
+;;     bag: {msg3, msg7}            <- are 3 and 7 neighbours?  No way to know.
+;;
+;; A range answers exactly that.  It is a cons (OLDEST-TS . LATEST-TS) meaning
+;; "every message between these two, inclusive, has been downloaded":
+;;
+;;     ranges: ((ts3 . ts3) (ts7 . ts7))    two islands, one hole between them
+;;
+;; The hole between two ranges is what the message buffer draws as
+;; "load older / load newer".  Filling a hole means downloading a chunk and
+;; adding its range:
+;;
+;;     add (ts2 . ts3)  =>  ((ts2 . ts3) (ts7 . ts7))    hole is smaller
+;;     add (ts4 . ts5)  =>  ((ts2 . ts5) (ts7 . ts7))    hole is smaller still
+;;     add (ts5 . ts7)  =>  ((ts2 . ts7))                hole gone, one island
+;;
+;; That last line is the whole trick: we never diff message lists to notice
+;; that a newly loaded chunk rejoined the rest of the history.  The ranges
+;; overlap, and overlapping ranges get merged into one, so the hole (and its
+;; buttons) simply stops existing.
+;;
+;; Slack cooperates: ask for a window with oldest=A and latest=B, and if the
+;; reply says has_more=false then that window is complete.  In that case record
+;; (A . B) itself instead of the first/last timestamp that came back - that is
+;; what makes neighbouring ranges touch and merge.  Recording only what came
+;; back would leave a hole with nothing in it, and its buttons would never go
+;; away.
+;;
+;; Timestamps are strings like "1657626419.612969", so plain `string<' orders
+;; them correctly and is used throughout.
+
+(defun slack-ranges-normalize (ranges)
+  "Sort RANGES oldest first and merge any that overlap or touch.
+
+>> (slack-ranges-normalize (list '(\"d\" . \"e\") '(\"a\" . \"b\")))
+=> ((\"a\" . \"b\") (\"d\" . \"e\"))"
+
+  (let ((sorted (cl-sort (cl-remove-if #'null (copy-sequence ranges))
+                         #'string< :key #'car))
+        (ret '()))
+    (dolist (range sorted)
+      (let ((prev (car ret)))
+        (if (and prev (not (string< (cdr prev) (car range))))
+            ;; RANGE starts at or before the end of the previous block, so the
+            ;; two are really one block: stretch the previous one if needed.
+            (when (string< (cdr prev) (cdr range))
+              (setcdr prev (cdr range)))
+          (push (cons (car range) (cdr range)) ret))))
+    (nreverse ret)))
+
+(defun slack-ranges-add (ranges oldest latest)
+  "Return RANGES with the block running from OLDEST to LATEST merged in.
+
+>> (slack-ranges-add '((\"e\" . \"f\")) \"a\" \"d\")
+=> ((\"a\" . \"d\") (\"e\" . \"f\"))"
+  (slack-ranges-normalize
+   (if (or (null oldest) (null latest))
+       ranges
+     (let ((lo (if (string< latest oldest) latest oldest))
+           (hi (if (string< latest oldest) oldest latest)))
+       (cons (cons lo hi) ranges)))))
+
+(defun slack-ranges-gaps (ranges)
+  "Return the holes between RANGES as a list of (TOP-TS . BOTTOM-TS).
+TOP-TS is the newest message we have before the hole and BOTTOM-TS the oldest
+message we have after it, so the missing messages lie strictly between them.
+
+>> (slack-ranges-gaps '((\"a\" . \"d\") (\"f\" . \"g\")))
+=> ((\"d\" . \"f\"))"
+  (cl-loop for rest on (slack-ranges-normalize ranges)
+           while (cdr rest)
+           collect (cons (cdar rest)
+                         (caadr rest))))
+
+(defun slack-ranges-contain-p (ranges ts)
+  "Return non-nil when TS falls inside one of RANGES.
+
+>> (slack-ranges-contain-p '((\"a\" . \"e\")) \"d\")
+=> (\"a\" . \"e\")
+
+>> (slack-ranges-contain-p '((\"a\" . \"e\")) \"z\")
+=> nil"
+  (cl-find-if #'(lambda (range)
+                  (and (not (string< ts (car range)))
+                       (not (string< (cdr range) ts))))
+              ranges))
+
+(defun slack-ranges-clip (ranges oldest-kept)
+  "Return RANGES with everything older than OLDEST-KEPT removed.
+Call this after dropping old messages from the store, otherwise the ranges
+would claim we still have history that we just threw away.
+
+>> (slack-ranges-clip '((\"a\" . \"c\") (\"e\" . \"d\")) \"b\")
+=> ((\"b\" . \"c\") (\"e\" . \"d\"))"
+  (when oldest-kept
+    (cl-loop for range in (slack-ranges-normalize ranges)
+             ;; whole block is older than what we kept: forget it
+             unless (string< (cdr range) oldest-kept)
+             collect (if (string< (car range) oldest-kept)
+                         (cons oldest-kept (cdr range))
+                       range))))
+
+(defun slack-messages-oldest-ts (messages)
+  (car (cl-sort (mapcar #'slack-ts messages) #'string<)))
+
+(defun slack-messages-latest-ts (messages)
+  (car (last (cl-sort (mapcar #'slack-ts messages) #'string<))))
+
+(cl-defmethod slack-room-ranges ((room slack-room))
+  "Blocks of contiguous history loaded for ROOM, oldest first.
+When nothing was ever recorded but messages exist, treat them as one block:
+that is how the buffer behaved before ranges existed."
+  (or (oref room message-ranges)
+      (slack-if-let* ((ids (oref room message-ids)))
+          (list (cons (car ids) (car (last ids)))))))
+
+(cl-defmethod slack-room-gaps ((room slack-room))
+  "Holes in ROOM's loaded history, as (TOP-TS . BOTTOM-TS) pairs."
+  (slack-ranges-gaps (slack-room-ranges room)))
+
+(cl-defmethod slack-room-ensure-ranges ((room slack-room))
+  "Write down what ROOM holds right now, if nothing was written down yet.
+Call this before adding messages that are NOT next to the ones already there,
+otherwise the fallback in `slack-room-ranges' would look at the store after the
+newcomers landed and cheerfully declare the whole thing one contiguous block,
+hiding the very hole we are about to create."
+  (unless (oref room message-ranges)
+    (oset room message-ranges (slack-room-ranges room)))
+  (oref room message-ranges))
+
+(cl-defmethod slack-room-add-range ((room slack-room) oldest latest)
+  "Record that ROOM has every message between OLDEST and LATEST."
+  (oset room message-ranges
+        (slack-ranges-add (slack-room-ranges room) oldest latest))
+  (oref room message-ranges))
+
+(cl-defmethod slack-room-range-messages ((room slack-room) range)
+  "Messages of ROOM inside RANGE, oldest first."
+  (cl-loop for ts in (oref room message-ids)
+           if (and (not (string< ts (car range)))
+                   (not (string< (cdr range) ts)))
+           collect (slack-room-find-message room ts) into ret
+           finally return (cl-remove-if #'null ret)))
+
+(cl-defmethod slack-room-extend-latest-range ((room slack-room) ts)
+  "Stretch ROOM's newest block up to TS.
+Used for messages arriving live: while the websocket is connected we see every
+new message, so nothing can be missing between the previous newest and TS."
+  (slack-if-let* ((ranges (oref room message-ranges))
+                  (newest (car (last ranges))))
+      (when (string< (cdr newest) ts)
+        (setcdr newest ts))))
+
+(cl-defmethod slack-room-record-fetched-range ((room slack-room) messages
+                                               &key oldest latest reached-start)
+  "Record the block of history just fetched for ROOM.
+MESSAGES is what came back.  OLDEST and LATEST are the window bounds you asked
+Slack for: pass one only when you know the reply covered it (the request was
+anchored there, or has_more came back nil), because then the block reaches that
+bound even if no message sits exactly on it.  REACHED-START means there is
+nothing older left to fetch."
+  (let ((lo (or oldest (slack-messages-oldest-ts messages)))
+        (hi (or latest (slack-messages-latest-ts messages))))
+    (when (and lo hi)
+      (slack-room-add-range room lo hi)))
+  (when reached-start
+    (oset room history-start-reached t))
+  (oref room message-ranges))
+
 (cl-defmethod slack-room-delete-message ((this slack-room) ts)
   (remhash ts (oref this messages))
   (oset this
@@ -192,12 +373,16 @@
     (oset this message-ids
           (cl-sort (oref this message-ids) #'string<))
 
+    (slack-room-extend-latest-range this ts)
+
     (slack-if-let* ((counts (oref team counts)))
         (slack-room--update-latest this counts ts))))
 
 (cl-defmethod slack-room-clear-messages ((room slack-room))
   (oset room messages (make-hash-table :test 'equal :size 300))
-  (oset room message-ids '()))
+  (oset room message-ids '())
+  (oset room message-ranges '())
+  (oset room history-start-reached nil))
 
 
 (cl-defmethod slack-room-trim-messages ((room slack-room) &optional (n 100))
@@ -208,12 +393,19 @@ Defaults to 100. Used to reduce memory after closing buffers."
            (keep-ids (if (> len n)
                          (last message-ids n)
                        message-ids))
+           (oldest-kept (car keep-ids))
            (new-ht (make-hash-table :test 'equal :size (max n 10))))
       (dolist (ts keep-ids)
         (slack-if-let* ((m (gethash ts messages)))
             (puthash ts m new-ht)))
       (oset room messages new-ht)
-      (oset room message-ids (cl-sort keep-ids #'string<)))))
+      (oset room message-ids (cl-sort keep-ids #'string<))
+      ;; We just threw history away, so the ranges must forget it too,
+      ;; otherwise they would promise messages the store no longer holds.
+      (when (> len (length keep-ids))
+        (oset room message-ranges
+              (slack-ranges-clip (oref room message-ranges) oldest-kept))
+        (oset room history-start-reached nil)))))
 
 (cl-defmethod slack-room-set-messages ((room slack-room) messages team)
   (cl-loop for m in messages
