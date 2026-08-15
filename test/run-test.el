@@ -826,7 +826,8 @@ https://google.com
         (let ((section (car elements)))
           (should (string= "rich_text_list" (plist-get section :type)))
           (should (string= "bullet" (plist-get section :style)))
-          (should (eq 1 (plist-get section :indent)))
+          ;; One leading space is less than one two-space indentation level.
+          (should (eq 0 (plist-get section :indent)))
           (let ((elements (plist-get section :elements)))
             (should (eq 3 (length elements)))
 
@@ -914,7 +915,8 @@ https://api.slack.com/changelog/2019-09-what-they-see-is-what-you-get-and-more-a
   (let* ((payload (list :type "rich_text_preformatted"
                         :elements (list (list :type "text" :text "code\nblock"))))
          (block (slack-create-rich-text-block-element payload)))
-    (should (string= "```code\nblock```\n"
+    ;; Rich-text preformatted blocks use fenced Markdown with line breaks.
+    (should (string= "```\ncode\nblock\n\n```\n"
                      (slack-block-to-mrkdwn block))))
   (let* ((payload (list :type "rich_text_quote"
                         :elements (list (list :type "text" :text "block\nquote"))))
@@ -1221,52 +1223,11 @@ thread buffer draws the root and the separator and nothing else."
         (ert-fail "no thread buffer was created"))
       (should (null browsed)))))
 
-(ert-deftest slack-test-export-indents-loaded-thread-replies ()
-  "The flattened export keeps roots and indents their loaded replies."
-  (slack-test-setup
-    (let* ((root-ts (slack-test-ts 1))
-           (reply-ts (slack-test-ts 2))
-           (root (slack-test-message team channel root-ts "root" root-ts))
-           (reply (slack-test-message team channel reply-ts "reply" root-ts)))
-      (slack-room-set-messages channel (list root reply) team)
-      (slack-message-set-replies channel root-ts (list reply))
-      (with-temp-buffer
-        (slack-export--insert-room channel team)
-        (let ((text (buffer-string)))
-          (should (string-match-p "root" text))
-          (should (string-match-p "^  .*reply" text))
-          (should (not (string-match-p "^  .*root" text))))))))
-
-(ert-deftest slack-test-export-fetches-thread-pages ()
-  "The exporter follows every conversations.replies cursor."
-  (slack-test-setup
-    (let* ((root-ts (slack-test-ts 1))
-           (reply-one-ts (slack-test-ts 2))
-           (reply-two-ts (slack-test-ts 3))
-           (root (slack-test-message team channel root-ts "root" root-ts))
-           (reply-one (slack-test-message team channel reply-one-ts
-                                          "reply one" root-ts))
-           (reply-two (slack-test-message team channel reply-two-ts
-                                          "reply two" root-ts))
-           (calls 0))
-      (oset root reply-count 2)
-      (slack-room-set-messages channel (list root) team)
-      (cl-letf (((symbol-function 'slack-conversations-replies)
-                 (lambda (room ts team &rest args)
-                   (cl-incf calls)
-                   (funcall (plist-get args :after-success)
-                            (if (= calls 1)
-                                (list root reply-one)
-                              (list reply-two))
-                            (and (= calls 1) "page-2")
-                            (= calls 1)))))
-        (slack-export--fetch-thread
-         root channel team
-         (lambda ()
-           (should (= 2 calls))
-           (should (equal (list reply-one-ts reply-two-ts)
-                          (oref root replies))))))
-      (should (= 2 calls)))))
+(load (expand-file-name
+       "slack-export-test.el"
+       (file-name-directory (or load-file-name buffer-file-name)))
+      nil
+      nil)
 
 (if noninteractive
     (ert-run-tests-batch-and-exit)

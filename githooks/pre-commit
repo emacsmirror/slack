@@ -1,0 +1,66 @@
+#!/bin/sh
+
+# Run the ERT suite before committing via `make check`.  This hook is
+# intentionally tolerant of an unavailable test environment: dependency
+# setup may need the network, and a developer should still be able to
+# commit when that setup is impossible.
+
+set -u
+
+script_path=$0
+while [ -L "$script_path" ]; do
+    link_target=$(readlink "$script_path") || break
+    case "$link_target" in
+        /*) script_path=$link_target ;;
+        *) script_path=$(dirname "$script_path")/$link_target ;;
+    esac
+done
+root=$(CDPATH= cd -- "$(dirname -- "$script_path")/.." && pwd) || exit 0
+
+emacs_bin=${EMACS:-}
+if [ -z "$emacs_bin" ]; then
+    emacs_bin=$(command -v emacs 2>/dev/null || true)
+fi
+
+if [ -z "$emacs_bin" ] || [ ! -x "$emacs_bin" ]; then
+    printf '%s\n' \
+        "pre-commit: Emacs is unavailable; skipping test gate."
+    exit 0
+fi
+
+if ! command -v make >/dev/null 2>&1; then
+    printf '%s\n' \
+        "pre-commit: make is unavailable; skipping test gate."
+    exit 0
+fi
+
+log_file=$(mktemp "${TMPDIR:-/tmp}/emacs-slack-pre-commit.XXXXXX" 2>/dev/null ||
+    {
+        printf '%s\n' \
+            "pre-commit: cannot create a test log; skipping test gate."
+        exit 0
+    })
+trap 'rm -f "$log_file"' EXIT HUP INT TERM
+
+cd "$root" || exit 0
+
+export EMACS="$emacs_bin"
+
+# Try to install dependencies; skip the gate if setup is impossible.
+if ! make install >"$log_file" 2>&1; then
+    printf '%s\n' \
+        "pre-commit: dependency setup failed; skipping test gate."
+    printf '%s\n' "pre-commit: setup output:"
+    tail -n 20 "$log_file"
+    exit 0
+fi
+
+# Run the tests; block the commit on failure.
+if make test >"$log_file" 2>&1; then
+    printf '%s\n' "pre-commit: tests passed."
+    exit 0
+fi
+
+printf '%s\n' "pre-commit: tests failed; commit blocked."
+cat "$log_file"
+exit 1

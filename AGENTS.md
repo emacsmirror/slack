@@ -25,36 +25,33 @@ GNU Emacs client for Slack. Plain Emacs Lisp, `lexical-binding: t`, built on
   for a proposed split).
 - `test/run-test.el` — ERT suite. Helpers: `slack-test-ts`, `slack-test-range`,
   `slack-test-setup`, `slack-test-with-registered-team`.
+- `test/slack-export-test.el` — exporter-specific tests, loaded by
+  `test/run-test.el`.
 
-## Running the tests
+## Makefile
 
-The package ships compiled `.elc` files that are newer than the source after
-edits. `require` loads the `.elc` by default, so **source changes can be
-silently ignored**. Always run the suite with `load-prefer-newer` so the source
-wins:
-
-```sh
-emacs -Q --batch \
-      --eval '(progn (setq load-prefer-newer t) (package-initialize) (add-to-list (quote load-path) default-directory))' \
-      -l ./test/run-test.el
-```
-
-Two tests are pre-existing failures unrelated to most work:
-`slack-test-block-to-mrkdwn` and `slack-test-create-blocks-from-buffer`. A
-clean run is "everything else passes".
-
-## Byte-compiling
+All build and test commands go through the Makefile:
 
 ```sh
-emacs -Q --batch \
-      --eval '(progn (package-initialize) (add-to-list (quote load-path) default-directory))' \
-      -f batch-byte-compile <file>.el
+make install   # fetch missing dependencies into ELPA_DIR
+make compile   # byte-compile all .el files
+make reload    # reload the package into a running Emacs (via emacsclient)
+make test      # run the ERT suite (source-preferred)
+make check     # install + compile + test (what the pre-commit hook runs)
+make clean     # remove .elc files
 ```
 
-The HEAD tree already emits a fixed set of warnings (free variable `metadata`
-in `slack-buffer-animate-image`, a few `Unused lexical argument` / `Unknown
-slot` / `docstring` warnings in other files). A change should add **no new**
-warnings, not eliminate the old ones.
+Override the Emacs binary or dependency cache with `EMACS=/path/to/emacs` or
+`ELPA_DIR=/path/to/elpa`.
+
+The `test` recipe sets `load-prefer-newer` so source files win over stale
+`.elc` artifacts. The suite should be fully green; if a test fails,
+investigate it rather than assuming it is a known baseline failure.
+
+The HEAD tree already emits a fixed set of byte-compile warnings (free
+variable `metadata` in `slack-buffer-animate-image`, a few `Unused lexical
+argument` / `Unknown slot` / `docstring` warnings in other files). A change
+should add **no new** warnings, not eliminate the old ones.
 
 ## Conventions
 
@@ -76,3 +73,19 @@ warnings, not eliminate the old ones.
 - Keep modules roughly under 500 lines. If a file grows beyond that or becomes
   noticeably larger than a clean, cohesive Elisp module, propose a split or
   refactor before adding more unrelated functionality.
+- Split tests by functionality into dedicated `test/*-test.el` files; load each
+  file from `test/run-test.el` so the standard suite still covers everything.
+
+## Pre-commit hook
+
+The tracked hook is `githooks/pre-commit`; install it for a checkout with:
+
+```sh
+ln -sf ../../githooks/pre-commit .git/hooks/pre-commit
+```
+
+It runs `make test` and blocks commits on test failures. When Emacs, make, or
+dependency setup is unavailable, it prints the reason and skips the gate.
+Dependencies are installed via `make install` into
+`~/.cache/emacs-slack/elpa` (or `$XDG_CACHE_HOME/emacs-slack/elpa`); override
+that location with `ELPA_DIR`.
