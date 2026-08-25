@@ -45,6 +45,7 @@ see \"Formatting dates\" section in https://api.slack.com/docs/message-formattin
   :group 'slack)
 
 (defvar slack-channel-button-keymap)
+(defvar slack-user-mention-keymap)
 (defvar slack-message-user-regexp "<@\\([WU].*?\\)\\(|.*?\\)?>")
 
 (defun slack-unescape-&<> (text)
@@ -158,6 +159,9 @@ see \"Formatting dates\" section in https://api.slack.com/docs/message-formattin
                                       nil))
                                   (and label (substring label 1))
                                   "<Unknown USER>"))
+                  'user-id user-id
+                  'mouse-face 'highlight
+                  'keymap slack-user-mention-keymap
                   'slack-defer-face face))))
     (replace-regexp-in-string slack-message-user-regexp
                               #'replace

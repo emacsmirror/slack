@@ -72,8 +72,14 @@
     (setq buffer-read-only nil)
     (erase-buffer)
     (goto-char (point-min))
-    (insert (propertize (slack-user-profile-to-string user-id team)
-                        'ts 'dummy))
+    (if (slack-user-find user-id team)
+        (insert (propertize (slack-user-profile-to-string user-id team)
+                            'ts 'dummy))
+      ;; User not cached yet.  `slack-user-find' above already triggered
+      ;; an async `users.info' fetch as a side-effect; when it completes,
+      ;; `slack-user--refresh-visible-buffers' will re-render this buffer.
+      (insert (propertize (format "Loading profile for %s..." user-id)
+                          'face 'italic)))
     (setq buffer-read-only t)
     (slack-buffer-enable-emojify)
     (goto-char (point-min))

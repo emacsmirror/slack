@@ -9,8 +9,10 @@
 (require 'slack-image)
 (require 'slack-message-buffer)
 (require 'slack-export)
+(require 'slack-user-message)
 
 (defvar slack-channel-button-keymap nil)
+(defvar slack-user-mention-keymap nil)
 (setq slack-render-image-p t)
 
 (defmacro slack-test-setup (&rest body)
@@ -115,6 +117,16 @@
                    (slack-unescape-@
                     "<@U424242>" team)))
     ))
+
+(ert-deftest slack-test-unescape-@-mention-keymap ()
+  "Mention text rendered by `slack-unescape-@' carries a `user-id'
+text property and a keymap so it can be clicked to open a profile."
+  (slack-test-setup
+    (let* ((rendered (slack-unescape-@ (format "<@%s>" user-id) team))
+           (pos (string-match (regexp-quote (format "@%s" display-name)) rendered)))
+      (should (string= user-id (get-text-property pos 'user-id rendered)))
+      (should (eq slack-user-mention-keymap
+                 (get-text-property pos 'keymap rendered))))))
 
 (ert-deftest slack-test-unescape-!subteam ()
   (slack-test-setup
@@ -1222,6 +1234,104 @@ thread buffer draws the root and the separator and nothing else."
             (should (equal reply-ts (slack-get-ts))))
         (ert-fail "no thread buffer was created"))
       (should (null browsed)))))
+
+;;; lazy user fetch (`slack-user--maybe-fetch')
+(ert-deftest slack-test-user-maybe-fetch-requests-uncached-user ()
+  "Looking up an uncached user ID triggers one `slack-user-info-request'."
+  (slack-test-setup
+    (oset team token "xoxb-test-token")
+    (let ((fetch-args nil))
+      (cl-letf (((symbol-function 'slack-user-info-request)
+                 (lambda (user-id team &key after-success)
+                   (push (list user-id after-success) fetch-args)
+                   ;; simulate a successful fetch: store the user, run callback
+                   (puthash "U99999"
+                            (list :id "U99999"
+                                  :profile (list :display_name_normalized "External"
+                                                 :real_name_normalized "External"))
+                            (oref team users))
+                   (when (functionp after-success)
+                     (funcall after-success)))))
+        (should (null (slack-user--find "U99999" team)))
+        (should (equal 1 (length fetch-args)))
+        ;; after the fetch callback, the user is cached
+        (should (equal "External" (slack-user-name "U99999" team)))))))
+
+(ert-deftest slack-test-user-maybe-fetch-does-not-duplicate ()
+  "Repeated lookups for the same uncached user only fetch once."
+  (slack-test-setup
+    (oset team token "xoxb-test-token")
+    (let ((fetch-count 0))
+      (cl-letf (((symbol-function 'slack-user-info-request)
+                 (lambda (&rest _)
+                   (cl-incf fetch-count)
+                   ;; do nothing; leave user uncached so the pending guard
+                   ;; is what prevents the second call
+                   nil)))
+        (slack-user--find "U99999" team)
+        (slack-user--find "U99999" team)
+        (should (equal 1 fetch-count))))))
+
+(ert-deftest slack-test-user-maybe-fetch-skips-bots ()
+  "Bot IDs (starting with B) are not fetched via `users.info'."
+  (slack-test-setup
+    (oset team token "xoxb-test-token")
+    (let ((fetch-count 0))
+      (cl-letf (((symbol-function 'slack-user-info-request)
+                 (lambda (&rest _) (cl-incf fetch-count))))
+        (slack-user--find "B12345" team)
+        (should (equal 0 fetch-count))))))
+
+(ert-deftest slack-test-user-maybe-fetch-cached-user-no-fetch ()
+  "A cached user is returned without triggering a fetch."
+  (slack-test-setup
+    (let ((fetch-count 0))
+      (cl-letf (((symbol-function 'slack-user-info-request)
+                 (lambda (&rest _) (cl-incf fetch-count))))
+        (should (eq (car (gethash "U11111" (oref team users)))
+                    (car (slack-user--find "U11111" team))))
+        (should (equal 0 fetch-count))))))
+
+(ert-deftest slack-test-user-maybe-fetch-no-token-no-fetch ()
+  "When the team has no token, no fetch is attempted."
+  (slack-test-setup
+    (let ((fetch-count 0))
+      (cl-letf (((symbol-function 'slack-user-info-request)
+                 (lambda (&rest _) (cl-incf fetch-count))))
+        (slack-user--find "U99999" team)
+        (should (equal 0 fetch-count))))))
+
+(ert-deftest slack-test-user-timezone-missing-tz-offset ()
+  "Timezone functions return nil for users without `tz_offset'
+\(e.g. external/Slack-Connect users) instead of crashing."
+  (let ((external-user (list :id "UEXT01"
+                             :profile (list :display_name_normalized "External"
+                                            :real_name_normalized "External")))
+        (nil-user nil))
+    (should (null (slack-user-timezone external-user)))
+    (should (null (slack-user-local-time external-user)))
+    (should (null (slack-user-timezone nil-user)))
+    (should (null (slack-user-local-time nil-user)))))
+
+;;; reply-broadcast message user-ids scans text for mentions
+(ert-deftest slack-test-reply-broadcast-user-ids-includes-mentions ()
+  "A reply-broadcast message collects mentioned user IDs from text, not
+just the sender."
+  (slack-test-setup
+    (let ((msg (slack-message-create
+                (list :type "message"
+                      :subtype "thread_broadcast"
+                      :ts (slack-test-ts 5)
+                      :user "U11111"
+                      :text "Hey <@U22222> and <@U33333>")
+                team
+                channel)))
+      (should (eq 'slack-reply-broadcast-message
+                  (eieio-object-class-name msg)))
+      (let ((ids (slack-message-user-ids msg)))
+        (should (member "U11111" ids))
+        (should (member "U22222" ids))
+        (should (member "U33333" ids))))))
 
 (load (expand-file-name
        "slack-export-test.el"

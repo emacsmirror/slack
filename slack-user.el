@@ -37,6 +37,10 @@
 
 (defvar slack-completing-read-function)
 
+(declare-function slack-buffer-redraw "slack-message-buffer")
+(declare-function slack-buffer-buffer "slack-buffer")
+(declare-function slack-display-image "slack-buffer")
+
 (defconst slack-dnd-end-dnd-url "https://slack.com/api/dnd.endDnd")
 (defconst slack-dnd-set-snooze-url "https://slack.com/api/dnd.setSnooze")
 (defconst slack-set-presence-url "https://slack.com/api/users.setPresence")
@@ -67,11 +71,64 @@
   :group 'slack)
 
 (cl-defmethod slack-user-find ((id string) team)
-  (gethash id (oref team users)))
+  (or (gethash id (oref team users))
+      (slack-user--maybe-fetch id team)))
 ;; TODO remove this. use `slack-user-find'
 (defun slack-user--find (id team)
-  "Find user by ID from TEAM."
-  (gethash id (oref team users)))
+  "Find user by ID from TEAM.
+If the user is not cached, asynchronously fetch via `users.info' as a
+side-effect so that subsequent lookups (and a re-render of visible
+buffers) will succeed."
+  (or (gethash id (oref team users))
+      (slack-user--maybe-fetch id team)))
+
+(defun slack-user--maybe-fetch (user-id team)
+  "Asynchronously fetch USER-ID from TEAM if not already cached or pending.
+Returns nil (the caller still gets nil from the lookup), but once the
+fetch completes the user is stored in the team cache and visible
+buffers are re-rendered.  Bot IDs (starting with \"B\") are skipped;
+they are handled by `slack-bot-info-request'."
+  (when (and user-id
+             (< 0 (length user-id))
+             (not (string-prefix-p "B" user-id))
+             (let ((token (oref team token)))
+               (and token (stringp token) (< 0 (length token))))
+             (not (gethash user-id (oref team pending-user-fetches))))
+    (puthash user-id t (oref team pending-user-fetches))
+    (slack-user-info-request
+     user-id team
+     :after-success
+     (lambda ()
+       (remhash user-id (oref team pending-user-fetches))
+       (slack-user--refresh-visible-buffers user-id team))))
+  nil)
+
+(defun slack-user--refresh-visible-buffers (user-id team)
+  "Re-render visible slack buffers that may display USER-ID in TEAM.
+After a lazy user fetch completes, redraw any visible message buffer
+(so sender names update) and the user-profile buffer for USER-ID (if
+shown)."
+  (cl-labels
+      ((visible-buffers-p (buffer)
+         (when-let* ((buf (slack-buffer-buffer buffer)))
+           (or (get-buffer-window buf)
+               (get-buffer-window buf t))))
+       (redraw-message-buffer (buffer)
+         (slack-buffer-redraw buffer))
+       (redraw-profile-buffer (buffer)
+         (with-current-buffer (slack-buffer-buffer buffer)
+           (let ((inhibit-read-only t))
+             (slack-buffer--insert buffer))
+           (slack-display-image)
+           (goto-char (point-min)))))
+    (when-let* ((ht (oref team slack-user-profile-buffer))
+                (buf (gethash user-id ht)))
+      (when (visible-buffers-p buf)
+        (redraw-profile-buffer buf)))
+    (when (oref team slack-message-buffer)
+      (dolist (buf (hash-table-values (oref team slack-message-buffer)))
+        (when (visible-buffers-p buf)
+          (redraw-message-buffer buf))))))
 
 (defun slack-user-id (user)
   "Get id of USER."
@@ -217,22 +274,29 @@ Optionally expire the message at UNIX-EXPIRE-BY-TIME."
               real-name))))
 
 (defun slack-user-local-time (user)
-  "Get the USER local time as a AM/PM string."
-  (let ((offset (/ (plist-get user :tz_offset) (* 60 60))))
-    (if (<= 0 offset)
-        (format-time-string "%I:%M %p" (time-subtract (current-time) (encode-time 0 0 offset 0 0 0)))
-      (format-time-string "%I:%M %p" (time-add (current-time) (encode-time 0 0 offset 0 0 0)))
-      )))
+  "Get the USER local time as a AM/PM string.
+Returns nil when USER or its `tz_offset' is unavailable (e.g. for
+external/Slack-Connect users whose profile lacks timezone data)."
+  (let* ((tz-offset (and user (plist-get user :tz_offset)))
+         (offset (and tz-offset (/ tz-offset (* 60 60)))))
+    (when offset
+      (if (<= 0 offset)
+          (format-time-string "%I:%M %p" (time-subtract (current-time) (encode-time 0 0 offset 0 0 0)))
+        (format-time-string "%I:%M %p" (time-add (current-time) (encode-time 0 0 offset 0 0 0)))))))
 
 (defun slack-user-timezone (user)
-  (let ((offset (/ (plist-get user :tz_offset) (* 60 60))))
-    (format "%s, %s (Their time is %s)"
-            (or (plist-get user :tz)
-                (plist-get user :tz_label))
-            (if (<= 0 offset)
-                (format "+%s hour" offset)
-              (format "%s hour" offset))
-            (slack-user-local-time user))))
+  "Return a string describing USER's timezone.
+Returns nil when USER or its `tz_offset' is unavailable."
+  (let* ((tz-offset (and user (plist-get user :tz_offset)))
+         (offset (and tz-offset (/ tz-offset (* 60 60)))))
+    (when offset
+      (format "%s, %s (Their time is %s)"
+              (or (plist-get user :tz)
+                  (plist-get user :tz_label))
+              (if (<= 0 offset)
+                  (format "+%s hour" offset)
+                (format "%s hour" offset))
+              (slack-user-local-time user)))))
 
 (defun slack-user-property-to-str (value title)
   (and value (< 0 (length value))

@@ -44,7 +44,14 @@
   t)
 
 (cl-defmethod slack-message-user-ids ((m slack-reply-broadcast-message))
-  (list (oref m user)))
+  "Return the sender plus any user IDs mentioned in the message text.
+`slack-reply-broadcast-message' overrides the base method, which
+already scans text/blocks for mentions, so we delegate to it and
+prepend the sender to ensure both are fetched."
+  (cons (oref m user)
+        (cl-remove (oref m user)
+                   (cl-call-next-method)
+                   :test #'string=)))
 
 (defvar slack-user-message-keymap
   (let ((keymap (make-sparse-keymap)))

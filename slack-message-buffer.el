@@ -51,6 +51,12 @@
     (define-key keymap [mouse-1] #'slack-message-display-room)
     keymap))
 
+(defvar slack-user-mention-keymap
+  (let ((keymap (make-sparse-keymap)))
+    (define-key keymap (kbd "RET") #'slack-user-display-profile)
+    (define-key keymap [mouse-1] #'slack-user-display-profile)
+    keymap))
+
 (defvar slack-open-direct-message-keymap
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET")
@@ -1135,6 +1141,18 @@ Provide SUCCESS-CALLBACK to run some action after displaying."
        (room-id (get-text-property (point) 'room-id))
        (room (slack-room-find room-id team)))
       (slack-room-display room team)))
+
+(defun slack-user-display-profile ()
+  "Open the user profile buffer for the @mention at point.
+Reads the `user-id' text property placed on mention text by
+`slack-unescape-@' and block Kit rendering."
+  (interactive)
+  (slack-if-let*
+      ((buffer slack-current-buffer)
+       (team (slack-buffer-team buffer))
+       (user-id (get-text-property (point) 'user-id)))
+      (slack-buffer-display
+       (slack-create-user-profile-buffer team user-id))))
 
 (defun slack-im-select ()
   (interactive)

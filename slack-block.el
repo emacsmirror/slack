@@ -63,6 +63,7 @@ You need to install `language-detection' for this to work.")
 
 (defvar slack-completing-read-function)
 (defvar slack-channel-button-keymap)
+(defvar slack-user-mention-keymap)
 (defvar slack-current-buffer)
 
 ;; Layout Blocks
@@ -810,6 +811,9 @@ You need to install `language-detection' for this to work.")
     (unless team
       (error "`slack-rich-text-user-element' need team as option"))
     (propertize (format "@%s" (or (slack-user-name id team) id))
+                'user-id id
+                'mouse-face 'highlight
+                'keymap slack-user-mention-keymap
                 'face 'slack-message-mention-face)))
 
 (cl-defmethod slack-block-to-mrkdwn ((this slack-rich-text-user-element) option)
