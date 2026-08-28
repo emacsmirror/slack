@@ -1313,6 +1313,13 @@ thread buffer draws the root and the separator and nothing else."
     (should (null (slack-user-timezone nil-user)))
     (should (null (slack-user-local-time nil-user)))))
 
+(ert-deftest slack-test-user-hidden-p-missing-deleted-field ()
+  "Users without a `:deleted' field are not hidden.  External/Slack-Connect
+users fetched via `users.info' often lack this field."
+  (should (null (slack-user-hidden-p (list :id "UEXT01" :profile nil))))
+  (should (null (slack-user-hidden-p (list :id "U11111" :deleted :json-false))))
+  (should (slack-user-hidden-p (list :id "U11111" :deleted t))))
+
 ;;; reply-broadcast message user-ids scans text for mentions
 (ert-deftest slack-test-reply-broadcast-user-ids-includes-mentions ()
   "A reply-broadcast message collects mentioned user IDs from text, not

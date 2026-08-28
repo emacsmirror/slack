@@ -315,7 +315,11 @@ Returns nil when USER or its `tz_offset' is unavailable."
               users))))
 
 (defun slack-user-hidden-p (user)
-  (not (eq (plist-get user :deleted) :json-false)))
+  "Return non-nil if USER is deleted and should be hidden from lists.
+A user is hidden only when `:deleted' is explicitly true.  Users
+without a `:deleted' field (e.g. external/Slack-Connect users fetched
+via `users.info') are treated as active."
+  (eq t (plist-get user :deleted)))
 
 (defun slack--user-select (team)
   (slack-select-from-list ((slack-user-names team) "Select User: ")))
