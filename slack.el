@@ -83,6 +83,7 @@
 (require 'slack-usergroup)
 (require 'slack-modeline)
 (require 'slack-create-message)
+(require 'slack-vip)
 
 (require 'slack-company)
 

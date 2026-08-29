@@ -27,6 +27,7 @@
 (require 'slack-log)
 (require 'slack-user)
 (require 'slack-room)
+(require 'slack-vip)
 
 (defcustom slack-date-formats
   '((date_num . "%Y-%m-%d")
@@ -149,7 +150,8 @@ see \"Formatting dates\" section in https://api.slack.com/docs/message-formattin
                       (label (match-string 2 text))
                       (face (if (string= user-id (oref team self-id))
                                 'slack-message-mention-me-face
-                              'slack-message-mention-face)))
+                              'slack-message-mention-face))
+                      (vip-p (slack-user-vip-p-id user-id team)))
                  (propertize
                   (concat "@" (or (slack-if-let* ((user (slack-user--find user-id
                                                                           team)))
@@ -162,7 +164,12 @@ see \"Formatting dates\" section in https://api.slack.com/docs/message-formattin
                   'user-id user-id
                   'mouse-face 'highlight
                   'keymap slack-user-mention-keymap
-                  'slack-defer-face face))))
+                  'slack-defer-face
+                  (if vip-p
+                      (lambda (beg end)
+                        (add-text-properties beg end (list 'face face))
+                        (add-face-text-property beg end 'slack-user-vip-face))
+                    face)))))
     (replace-regexp-in-string slack-message-user-regexp
                               #'replace
                               text t t)))

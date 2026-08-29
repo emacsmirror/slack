@@ -38,6 +38,7 @@
 (require 'slack-bot)
 (require 'slack-usergroup)
 (require 'slack-slash-commands)
+(require 'slack-vip)
 (require 'slack-star)
 (require 'slack-message-notification)
 (require 'slack-room-buffer)
@@ -991,6 +992,7 @@ represent activity."
                        (slack-counts-update team)
                        ;; (slack-user-list-update team)
                        (slack-dnd-status-team-info team)
+                       (slack-vip-list-update team)
                        (when slack-buffer-emojify
                          (slack-download-emoji team #'on-emoji-download))
                        (slack-command-list-update team)

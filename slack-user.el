@@ -34,6 +34,7 @@
 (require 'slack-image)
 (require 'map)
 (require 'seq)
+(require 'slack-vip)
 
 (defvar slack-completing-read-function)
 
@@ -160,7 +161,7 @@ shown)."
   (format "%s%s %s"
           (or (slack-user-dnd-status-to-string user team) " ")
           (or (slack-user-presence-to-string user team) " ")
-          (slack-user--name user team)))
+          (slack-user-vip-display-name user team)))
 
 (defun slack-user--status (user)
   (let* ((profile (and user (plist-get user :profile)))

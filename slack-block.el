@@ -33,6 +33,7 @@
 (require 'slack-usergroup)
 (require 'slack-mrkdwn)
 (require 'slack-room)
+(require 'slack-vip)
 
 (defcustom slack-block-highlight-source nil
   "If non-nil, highlight source blocks in messages.
@@ -810,11 +811,14 @@ You need to install `language-detection' for this to work.")
         (id (oref this user-id)))
     (unless team
       (error "`slack-rich-text-user-element' need team as option"))
-    (propertize (format "@%s" (or (slack-user-name id team) id))
-                'user-id id
-                'mouse-face 'highlight
-                'keymap slack-user-mention-keymap
-                'face 'slack-message-mention-face)))
+    (let ((text (propertize (format "@%s" (or (slack-user-name id team) id))
+                           'user-id id
+                           'mouse-face 'highlight
+                           'keymap slack-user-mention-keymap
+                           'face 'slack-message-mention-face)))
+      (when (slack-user-vip-p-id id team)
+        (add-face-text-property 0 (length text) 'slack-user-vip-face nil text))
+      text)))
 
 (cl-defmethod slack-block-to-mrkdwn ((this slack-rich-text-user-element) option)
   (let ((team (plist-get option :team))

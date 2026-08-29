@@ -71,6 +71,11 @@ use `slack-change-current-team' to change `slack-current-team'"
    (message-id :initform 0)
    (subscribed-channels :initarg :subscribed-channels
                         :type list :initform nil)
+   (priority-users :initform (make-hash-table :test 'equal)
+                   :documentation "Hash-set of VIP/priority user IDs.
+Populated by `slack-vip-list-update', the `users.priority.add'/
+`remove' calls, and the user plist field named by
+`slack-user-vip-field' when users are cached.")
    (typing :initform nil)
    (typing-timer :initform nil)
    (reminders :initform nil :type list)
@@ -301,14 +306,23 @@ TODO I should experiment to see if api calls require cookies."
 (cl-defmethod slack-team-ims ((this slack-team))
   (hash-table-values (oref this ims)))
 
+(cl-defmethod slack-team-priority-users ((this slack-team))
+  (oref this priority-users))
+
 (cl-defmethod slack-team-users ((this slack-team))
   (hash-table-values (oref this users)))
+
+(declare-function slack-vip-sync-users "slack-vip" (team users))
 
 (cl-defmethod slack-team-set-users ((this slack-team) users)
   (cl-loop for user in users
            do (puthash (plist-get user :id)
                        user
-                       (oref this users))))
+                       (oref this users)))
+  ;; Sync VIP/priority set from the cached users' VIP field, when the
+  ;; VIP module is loaded.  Guarded so slack-team can be used without it.
+  (when (fboundp 'slack-vip-sync-users)
+    (slack-vip-sync-users this users)))
 
 (cl-defmethod slack-team-set-bots ((this slack-team) bots)
   (cl-loop for bot in bots

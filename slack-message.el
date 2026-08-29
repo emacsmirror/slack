@@ -33,6 +33,7 @@
 (require 'slack-unescape)
 (require 'slack-message-faces)
 (require 'slack-defcustoms)
+(require 'slack-vip)
 
 (defvar slack-current-buffer)
 
@@ -259,6 +260,7 @@
 (cl-defmethod slack-message-header ((this slack-message) team)
   (let* ((name (slack-message-sender-name this team))
          (user-id (slack-message-sender-id this))
+         (name (slack-user-vip-propertize-name name user-id team))
          (status (slack-message-user-status this team))
          (edited-at (slack-format-ts (slack-message-edited-at this)))
          (deleted-at (slack-format-ts (oref this deleted-at))))

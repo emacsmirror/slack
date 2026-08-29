@@ -30,6 +30,7 @@
 (require 'slack-user)
 (require 'slack-im)
 (require 'slack-image)
+(require 'slack-vip)
 
 ;; due to circular dependency we declare the symbol, since websocket is a core functionality
 (declare-function slack-team-send-presence-query "slack-websocket")
@@ -99,8 +100,14 @@
 
 (defun slack-user--profile-to-string (user team)
   (let* ((profile (slack-user-profile user))
-         (header (propertize (slack-user-header user team)
-                             'face 'slack-user-profile-header-face))
+         (header (let ((h (copy-sequence
+                           (concat (slack-user-header user team)
+                                   (when (slack-user-vip-p user team)
+                                     (slack-user-vip-label))))))
+                   ;; Merge so the `[VIP]' badge face is not clobbered.
+                   (add-face-text-property 0 (length h)
+                                           'slack-user-profile-header-face nil h)
+                   h))
          (presence (slack-user-property-to-str (slack-user-presence user team)
                                                "Presence"))
          (pronouns (slack-user-property-to-str (plist-get profile :pronouns) "Pronouns"))
