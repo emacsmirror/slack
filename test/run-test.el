@@ -1358,6 +1358,12 @@ just the sender."
       nil
       nil)
 
+(load (expand-file-name
+       "slack-activity-feed-test.el"
+       (file-name-directory (or load-file-name buffer-file-name)))
+      nil
+      nil)
+
 (if noninteractive
     (ert-run-tests-batch-and-exit)
   (ert t))

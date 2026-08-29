@@ -25,6 +25,7 @@
 ;;; Code:
 
 (require 'eieio)
+(require 'cl-lib)
 (require 'slack-util)
 (require 'slack-buffer)
 (require 'slack-search)
@@ -34,17 +35,133 @@
 (require 'dash)
 (require 's)
 
-(declare-function "slack-message-get-or-fetch" "slack-message.el")
+(declare-function slack-message-body "slack-message" (m team))
+(declare-function slack-message-get-or-fetch-async "slack-message" (ts room-id team &optional thread-ts after-success))
 
 (defvar slack-activity-feed-url "https://slack.com/api/activity.feed")
 (defvar slack-activity-feed-mode-show-only-unread nil "If non-nil, show only unread activity.")
 
 (defun slack-activity-feed-toggle-mode ()
+  "Toggle whether the activity feed defaults to the `unreads' view.
+This only affects the default offered by `slack-activity-feed-show' and
+`slack-activity-feed-switch-view'; pick another view to override it."
   (interactive)
-  (setq slack-activity-feed-mode-show-only-unread (not slack-activity-feed-mode-show-only-unread))
+  (setq slack-activity-feed-mode-show-only-unread
+        (not slack-activity-feed-mode-show-only-unread))
   (message (if slack-activity-feed-mode-show-only-unread
-               "slack-activity-feed will show only unread messages next time"
-             "slack-activity-feed will show read and unread messages next time")))
+               "slack-activity-feed will default to the unreads view next time"
+             "slack-activity-feed will default to the all view next time")))
+
+(defconst slack-activity-feed-types-all
+  "at_user,at_user_group,at_channel,at_everyone,keyword,list_record_assigned,list_user_mentioned,list_todo_notification,list_approval_request,list_approval_reviewed,unjoined_channel_mention,at_user,unjoined_channel_mention,at_channel,at_everyone,at_user_group,keyword,thread_v2,message_reaction,bot_dm_bundle,dm,prejoin_dm_welcome_party_alert,internal_channel_invite,external_channel_invite,external_dm_invite,quietly_added_to_channel,channel,saved_reminder,list_record_edited"
+  "Activity types requested for the broad views (all/unreads/vip/...).")
+
+(defconst slack-activity-feed-types-threads "thread_v2"
+  "Activity types requested for the threads views.")
+
+(defconst slack-activity-feed-types-mentions
+  "at_user,unjoined_channel_mention,at_channel,at_everyone,at_user_group,keyword"
+  "Activity types requested for the mentions view.")
+
+(defcustom slack-activity-feed-starred-channel-section-ids nil
+  "Channel section id(s) used by the `starred' activity feed view.
+Set this to the id of your \"starred channels\" sidebar section (a
+string) or a list of ids.  You can discover the id by inspecting the
+`activity.feed' request your Slack web client sends for the starred
+view.  When nil, the `starred' view behaves like `all'."
+  :type '(choice (const :tag "None" nil)
+                 (string :tag "Section id")
+                 (repeat :tag "Section ids" string))
+  :group 'slack)
+
+(defcustom slack-activity-feed-views
+  (list
+   (cons 'all          `(:types ,slack-activity-feed-types-all :mode "chrono_v1"))
+   (cons 'unreads      `(:types ,slack-activity-feed-types-all :mode "chrono_v1"
+                                :unread-only t))
+   (cons 'vip          `(:types ,slack-activity-feed-types-all :mode "chrono_v1"
+                                :priority-only t))
+   (cons 'vip-unreads  `(:types ,slack-activity-feed-types-all :mode "chrono_v1"
+                                :unread-only t :priority-only t))
+   (cons 'threads      `(:types ,slack-activity-feed-types-threads :mode "chrono_v1"))
+   (cons 'threads-unreads `(:types ,slack-activity-feed-types-threads :mode "chrono_v1"
+                                  :unread-only t))
+   (cons 'mentions-unreads `(:types ,slack-activity-feed-types-mentions :mode "chrono_v1"
+                                   :unread-only t))
+   (cons 'starred
+         (lambda ()
+           `(:types ,slack-activity-feed-types-all :mode "chrono_v1"
+                    :channel-section-ids ,slack-activity-feed-starred-channel-section-ids))))
+  "Alist mapping a view name (symbol) to its request params.
+Each value is either a plist of params (`:types', `:mode', `:unread-only',
+`:priority-only', `:channel-section-ids') or a function returning such a
+plist (evaluated each time the view is fetched).  Add your own views
+here or with `add-to-list'."
+  :type '(alist :key-type symbol :value-type (sexp :tag "params plist or function"))
+  :group 'slack)
+
+(defcustom slack-activity-feed-default-view 'all
+  "Default view offered by `slack-activity-feed-show' and
+`slack-activity-feed-switch-view' when you just press RET."
+  :type 'symbol
+  :group 'slack)
+
+(defun slack-activity-feed--view-params (view)
+  "Return the params plist for VIEW.
+VIEW is a symbol from `slack-activity-feed-views', or a params plist,
+or a function returning a params plist."
+  (let ((spec (if (symbolp view)
+                  (cdr (assq view slack-activity-feed-views))
+                view)))
+    (cond
+     ((functionp spec) (funcall spec))
+     ((listp spec) spec)
+     (t nil))))
+
+(defun slack-activity-feed--fields (team params)
+  "Build the alist of multipart form fields for the request from PARAMS."
+  (let ((section-ids (plist-get params :channel-section-ids)))
+    `(("token" . ,(or (slack-team-enterprise-token team) (slack-team-token team)))
+      ("limit" . "20")
+      ("types" . ,(plist-get params :types))
+      ("mode" . ,(or (plist-get params :mode) "chrono_v1"))
+      ("archive_only" . "false")
+      ,@(when section-ids
+          (list (cons "channel_section_ids" section-ids)))
+      ("unread_only" . ,(if (plist-get params :unread-only) "true" "false"))
+      ("priority_only" . ,(if (plist-get params :priority-only) "true" "false"))
+      ("only_salesforce_channels" . "false")
+      ("exclude_automations" . "false")
+      ("automations_only" . "false")
+      ("is_activity_inbox" . "true"))))
+
+(defun slack-activity-feed--build-body (fields &optional cursor)
+  "Build a multipart/form-data body from FIELDS (an alist of name . value).
+Nil-valued fields are skipped.  A list value is joined with commas.
+CURSOR is the optional pagination cursor."
+  (let* ((boundary "----WebKitFormBoundaryemacsSlackActivityFeed")
+         (delim (concat "--" boundary))
+         (part (lambda (name value)
+                 (when value
+                   (let ((v (if (listp value)
+                                 (mapconcat #'identity value ",")
+                               value)))
+                     (concat delim "\r\n"
+                             "Content-Disposition: form-data; name=\""
+                             name "\"\r\n\r\n" v "\r\n"))))))
+    (concat
+     (mapconcat (lambda (f) (or (funcall part (car f) (cdr f)) ""))
+                fields "")
+     (or (funcall part "cursor" cursor) "")
+     (funcall part "_x_reason" "fetchActivityFeed")
+     (funcall part "_x_mode" "online")
+     (funcall part "_x_sonic" "true")
+     (funcall part "_x_app_name" "client")
+     delim "--\r\n")))
+
+(defun slack-activity-feed--boundary ()
+  "The multipart boundary string used by `slack-activity-feed-request'."
+  "----WebKitFormBoundaryemacsSlackActivityFeed")
 
 (defun slack-activity-feed--jbool (jf)
   "Return nil if JF is JSON false, t otherwise."
@@ -96,33 +213,38 @@
                                :user (format "%s" (plist-get r :user))
                                :name (format "%s" (plist-get r :name))))))))
 
-(defun slack-activity-feed-request (team &optional after-success cursor)
-  "Request activity feed for CHANNEL-ID of TEAM.
-Run an action on the data returned with AFTER-SUCCESS."
-  (cl-labels
-      ((on-success (&key data &allow-other-keys)
-         (slack-request-handle-error
-          (data "slack-activity-feed-request")
-          (if after-success
+(cl-defun slack-activity-feed-request (team &key view after-success cursor)
+  "Request the activity feed for TEAM using VIEW.
+VIEW is a symbol from `slack-activity-feed-views' (or a params plist,
+or a function returning one).  AFTER-SUCCESS is called with the
+response data; CURSOR is the pagination cursor."
+  (let* ((params (slack-activity-feed--view-params view))
+         (fields (slack-activity-feed--fields team params))
+         (body (slack-activity-feed--build-body fields cursor)))
+    (cl-labels
+        ((on-success (&key data &allow-other-keys)
+           (slack-request-handle-error
+            (data "slack-activity-feed-request")
+            (when (functionp after-success)
               (funcall after-success data)))))
-    (slack-request
-     (slack-request-create
-      slack-activity-feed-url
-      team
-      :type "POST"
-      :success #'on-success
-      :data (let ((token (or (oref team :enterprise-token)
-                             (oref team :token)))
-                  (mode (if slack-activity-feed-mode-show-only-unread "priority_unreads_v1" "chrono_reads_and_unreads")))
-              (concat "------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"token\"\r\n\r\n" token "\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"limit\"\r\n\r\n20\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"types\"\r\n\r\nthread_v2,dm,generic_system_alert,message_reaction,internal_channel_invite,list_record_edited,bot_dm_bundle,at_user,at_user_group,at_channel,at_everyone,keyword,list_record_assigned,list_user_mentioned,external_channel_invite,shared_workspace_invite,external_dm_invite\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"mode\"\r\n\r\n" mode "\r\n" (if cursor (concat "------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"cursor\"\r\n\r\n" cursor "\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie--\r\n") "") "------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_reason\"\r\n\r\nfetchActivityFeed\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_mode\"\r\n\r\nonline\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_sonic\"\r\n\r\ntrue\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie\r\nContent-Disposition: form-data; name=\"_x_app_name\"\r\n\r\nclient\r\n------WebKitFormBoundaryh7x3DqJqAIvkEcie--\r\n"))
-      :headers (list
-                (cons "content-type"
-                      "multipart/form-data; boundary=----WebKitFormBoundaryh7x3DqJqAIvkEcie"))))))
+      (slack-request
+       (slack-request-create
+        slack-activity-feed-url
+        team
+        :type "POST"
+        :success #'on-success
+        :data body
+        :headers (list (cons "content-type"
+                             (format "multipart/form-data; boundary=%s"
+                                     (slack-activity-feed--boundary)))))))))
 
 (defclass slack-activity-feed ()
   ((activities :initarg :activities :initform nil :type (or null list))
    (pagination :initarg :pagination :type (or null string))
-   (last :initarg :last :type (or null integer))))
+   (last :initarg :last :type (or null integer))
+   (view :initarg :view :initform nil :type (or null symbol)
+         :documentation "The `slack-activity-feed-views' name used to fetch
+this feed, reused for pagination.")))
 (define-derived-mode slack-activity-feed-buffer-mode slack-buffer-mode "Slack Activity Feed"
   (remove-hook 'lui-post-output-hook 'slack-display-image t))
 
@@ -186,17 +308,18 @@ ACTIVITY-TYPE is the activity type string (e.g. \"thread_reply\")."
                               "\n"
                               (or
                                (condition-case msg-err
-                                   (when (or ts thread-ts)
-                                     (slack-message-body
-                                      (slack-message-get-or-fetch
-                                       ts
-                                       (oref room id) team thread-ts)
-                                      team))
+                                   (when (and (or ts thread-ts) room)
+                                     (let ((msg (slack-room-find-message room ts)))
+                                       (when msg
+                                         (slack-message-body msg team))))
                                  (error
-                                  (message "slack-activity-message-to-string: Loading messages failed with: %S"
+                                  (message "slack-activity-message-to-string: rendering message failed with: %S"
                                            (error-message-string msg-err))
                                   nil))
-                               "TODO"))
+                               (if (or ts thread-ts)
+                                   (propertize "(loading message...)"
+                                               'activity-pending ts)
+                                 "TODO")))
                       'ts ts
                       'team-id (oref team id)
                       'room-id (oref room id)
@@ -245,7 +368,49 @@ ACTIVITY-TYPE is the activity type string (e.g. \"thread_reply\")."
          (lui-time-stamp-time time)
          (lui-time-stamp-format "[%Y-%m-%d %H:%M] "))
     (lui-insert (slack-activity-to-string activity team) t)
-    (lui-insert "" t)))
+    (lui-insert "" t)
+    (slack-activity-feed--maybe-fetch-body this activity)))
+
+(defun slack-activity-feed--maybe-fetch-body (buffer activity)
+  "Dispatch a non-blocking fetch for ACTIVITY's message body if not cached.
+The activity feed renders a placeholder for messages not in the local
+cache; this fetches them in the background and fills the placeholder in
+once the body is available, so opening the feed never blocks."
+  (let* ((team (slack-buffer-team buffer))
+         (msg (oref (oref activity item) message))
+         (live-buf (slack-buffer-buffer buffer)))
+    (with-slots (ts channel thread-ts) msg
+      (let ((room (slack-room-find channel team)))
+        (unless (and room (slack-room-find-message room ts))
+          (slack-message-get-or-fetch-async
+           ts channel team thread-ts
+           (lambda (fetched)
+             (when (buffer-live-p live-buf)
+               (let ((body (if fetched
+                                (slack-message-body fetched team)
+                              "(message unavailable)")))
+                 (slack-activity-feed--replace-placeholder
+                  live-buf msg team body))))))))))
+
+(defun slack-activity-feed--replace-placeholder (buffer activity-message team body)
+  "Replace the loading placeholder for ACTIVITY-MESSAGE in BUFFER with BODY."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (let* ((ts (oref activity-message ts))
+             (inhibit-read-only t)
+             (pos (text-property-any (point-min) (point-max)
+                                     'activity-pending ts)))
+        (when pos
+          (let ((end (or (next-single-property-change pos 'activity-pending)
+                         (point-max))))
+            (save-excursion
+              (goto-char pos)
+              (delete-region pos end)
+              (insert (propertize body
+                                  'ts ts
+                                  'team-id (oref team id)
+                                  'room-id (oref activity-message channel)
+                                  'thread-ts (oref activity-message thread-ts))))))))))
 
 (cl-defmethod slack-buffer-has-next-page-p ((this slack-activity-feed-buffer))
   "Tell if there is another page of results for THIS SLACK-ACTIVITY-FEED-BUFFER."
@@ -265,10 +430,13 @@ ACTIVITY-TYPE is the activity type string (e.g. \"thread_reply\")."
   (with-slots (activity-feed) this
     (slack-activity-feed-request
      (slack-buffer-team this)
+     :view (oref activity-feed view)
+     :after-success
      (lambda (data)
        (let ((new-activity-feed
               (make-instance
                'slack-activity-feed
+               :view (oref activity-feed view)
                :activities
                (append
                 (oref activity-feed activities)
@@ -279,7 +447,7 @@ ACTIVITY-TYPE is the activity type string (e.g. \"thread_reply\")."
                :last (- (length (oref activity-feed activities)) 1))))
          (oset this activity-feed new-activity-feed)
          (funcall after-success)))
-     (oref activity-feed pagination))))
+     :cursor (oref activity-feed pagination))))
 
 (cl-defmethod slack-buffer-init-buffer ((this slack-activity-feed-buffer))
   (let ((buffer (cl-call-next-method)))
@@ -318,22 +486,54 @@ ACTIVITY-TYPE is the activity type string (e.g. \"thread_reply\")."
     (let ((lui-time-stamp-position nil))
       (lui-insert "(no more messages)\n" t))))
 
-(defun slack-activity-feed-show ()
-  "Show Slack activity feed."
-  (interactive)
-  (let ((team (slack-team-select)))
-    (slack-activity-feed-request
-     team
-     (lambda (data)
-       (let* ((activity-feed
-               (make-instance
-                'slack-activity-feed
-                :activities (mapcar #'slack-activity-feed--parse-item
-                                    (plist-get data :items))
-                :pagination (plist-get (plist-get data :response_metadata)
-                                       :next_cursor)))
-              (buffer (slack-create-activity-feed-buffer activity-feed team)))
-         (slack-buffer-display buffer))))))
+(defun slack-activity-feed--read-view ()
+  "Prompt for an activity feed view, returning the chosen symbol."
+  (let* ((names (mapcar #'car slack-activity-feed-views))
+         (default (if slack-activity-feed-mode-show-only-unread
+                     'unreads
+                   slack-activity-feed-default-view))
+         (choice (funcall slack-completing-read-function
+                         "Activity feed view: " names nil t nil nil
+                         (symbol-name default))))
+  (intern choice)))
+
+(defun slack-activity-feed--fetch-and-display (team view)
+  "Fetch the activity feed for TEAM with VIEW and display its buffer."
+  (slack-activity-feed-request
+   team
+   :view view
+   :after-success
+   (lambda (data)
+     (let* ((activity-feed
+             (make-instance
+              'slack-activity-feed
+              :view view
+              :activities (mapcar #'slack-activity-feed--parse-item
+                                   (plist-get data :items))
+              :pagination (plist-get (plist-get data :response_metadata)
+                                     :next_cursor)))
+            (buffer (slack-create-activity-feed-buffer activity-feed team)))
+       (slack-buffer-display buffer)))))
+
+;;;###autoload
+(defun slack-activity-feed-show (&optional view)
+  "Show the Slack activity feed for VIEW.
+Interactively, prompt for a view from `slack-activity-feed-views'
+(defaulting to `slack-activity-feed-default-view', or `unreads' when
+`slack-activity-feed-mode-show-only-unread' is non-nil)."
+  (interactive (list (slack-activity-feed--read-view)))
+  (slack-activity-feed--fetch-and-display (slack-team-select) view))
+
+(defun slack-activity-feed-switch-view (&optional view)
+  "Re-fetch the current activity feed buffer for VIEW.
+Interactively, prompt for a view.  Convenient to filter between views
+(e.g. `unreads', `vip', `threads', `mentions-unreads') without leaving
+the activity feed."
+  (interactive (list (slack-activity-feed--read-view)))
+  (let ((team (if (bound-and-true-p slack-current-buffer)
+                  (slack-buffer-team slack-current-buffer)
+                (slack-team-select))))
+    (slack-activity-feed--fetch-and-display team view)))
 
 (defun slack-activity-feed-open-message ()
   "Open message at point of activity-feed."
@@ -350,6 +550,7 @@ ACTIVITY-TYPE is the activity type string (e.g. \"thread_reply\")."
          thread-ts))
     (error "Not possible to jump to message")))
 (define-key slack-activity-feed-buffer-mode-map (kbd "RET") 'slack-activity-feed-open-message)
+(define-key slack-activity-feed-buffer-mode-map (kbd "v") 'slack-activity-feed-switch-view)
 
 (provide 'slack-activity-feed-buffer)
 ;;; slack-activity-feed-buffer.el ends here
