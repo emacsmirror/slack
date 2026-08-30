@@ -158,6 +158,53 @@
 (cl-defmethod slack-mpim-p ((room slack-group))
   (oref room is-mpim))
 
+(defun slack-group-mpim-open-from-current ()
+  "Start a new group DM seeded with the current conversation's members.
+From an IM or group DM buffer, pre-populate a new group conversation with
+the people already in this conversation, then prompt for additional
+users.  This mirrors the Slack app, where adding people to a DM spins
+up a new group DM; the original conversation is left untouched."
+  (interactive)
+  (slack-if-let* ((buf slack-current-buffer)
+                  (team (slack-buffer-team buf))
+                  (room (slack-buffer-room buf)))
+      (if (not (or (slack-im-p room) (slack-mpim-p room)))
+          (message "Run this from an IM or group DM buffer")
+        (let* ((self-id (oref team self-id))
+               (current-ids (cl-remove-if
+                             (lambda (id) (string= id self-id))
+                             (slack-room-get-members room)))
+               (candidates (cl-remove-if
+                            (lambda (entry)
+                              (member (plist-get (cdr entry) :id)
+                                      current-ids))
+                            (slack-user-names team))))
+          (cl-labels
+              ((prompt (loop-count)
+                 (if (< 0 loop-count)
+                     "Select another user (or leave empty): "
+                   "Select user to add: "))
+               (extra-ids ()
+                 (mapcar (lambda (u) (plist-get u :id))
+                         (slack-select-multiple #'prompt candidates))))
+            (let ((user-ids (append current-ids (extra-ids))))
+              (if (< 1 (length user-ids))
+                  (slack-conversations-open
+                   team
+                   :user-ids user-ids
+                   :on-success
+                   (lambda (data)
+                     (if-let* ((room-id (plist-get (plist-get data :channel) :id))
+                               (room (slack-room-find room-id team)))
+                         (slack-room-display room team)
+                       (slack-conversations-info
+                        room-id team
+                        (lambda ()
+                          (let ((room (slack-room-find room-id team)))
+                            (slack-room-display room team)))))))
+                (message "Need at least 2 users to start a group conversation"))))))
+    (message "Not in a Slack conversation buffer")))
+
 (cl-defmethod slack-room--has-unread-p ((this slack-group) counts)
   (if (slack-mpim-p this)
       (slack-counts-mpim-unread-p counts this)
