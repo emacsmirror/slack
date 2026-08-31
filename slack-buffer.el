@@ -35,6 +35,8 @@
 (require 'dash)
 (declare-function emojify-mode "emojify")
 (declare-function slack-open-message "slack-message-buffer")
+(declare-function yank-media-handler "yank-media" (types handler))
+(declare-function url-unhex-string "url-util" (str &optional allow-newlines))
 
 (defvar slack-buffer-function)
 (defvar slack-completing-read-function)
@@ -52,7 +54,11 @@
   (let ((map (make-sparse-keymap)))
     ;; (define-key map (kbd "C-s C-r") #'slack-room-update-messages)
     ;; (define-key map (kbd "C-s C-b") #'slack-message-write-another-buffer)
+    (define-key map (kbd "C-c C-f") #'slack-file-attach)
     map))
+;; Ensure the binding survives even if user config (e.g. general.el)
+;; pre-creates slack-mode-map before this file is loaded.
+(define-key slack-mode-map (kbd "C-c C-f") #'slack-file-attach)
 
 (defvar slack-load-more-keymap
   (let ((map (make-sparse-keymap)))
@@ -68,7 +74,10 @@
   (lui-set-prompt lui-prompt-string)
   (setq lui-input-function 'slack-message--send)
   ;; don't adjust indentation of messages
-  (setq-local lui-fill-type nil))
+  (setq-local lui-fill-type nil)
+  (when (fboundp 'yank-media-handler)
+    (yank-media-handler "image/.*" #'slack--yank-media-handler)
+    (yank-media-handler 'text/uri-list #'slack--yank-media-uri-handler)))
 
 (define-derived-mode slack-info-mode lui-mode "Slack Info"
   ""
@@ -90,6 +99,14 @@
      (save-restriction
        (widen)
        ,@body)))
+
+(defvar slack-buffer-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-f") #'slack-file-attach)
+    map)
+  "Keymap for `slack-buffer-mode'.")
+;; Ensure the binding survives even if user config pre-creates the keymap.
+(define-key slack-buffer-mode-map (kbd "C-c C-f") #'slack-file-attach)
 
 (define-derived-mode slack-buffer-mode lui-mode "Slack Buffer"
   (setq-local default-directory slack-default-directory)
@@ -809,6 +826,189 @@
                          "Select Channel: "))))
       (slack-conversations-unarchive channel team))))
 
+(defvar slack-max-message-attachment-count)
+
+(defvar-local slack-attached-files nil
+  "List of `slack-message-compose-buffer-file' objects queued in this buffer.
+They are uploaded and attached to the message when you send it, mirroring
+the Slack app's draft-then-send file flow.")
+
+(defun slack-file-attach-path (path &optional filename)
+  "Attach the file at PATH to the current message draft.
+FILENAME defaults to the basename of PATH.  The file is uploaded and
+attached when the draft is sent, not immediately, so you can queue
+several files and keep editing the message before sending."
+  (let ((buf slack-current-buffer))
+    (unless (and buf (memq (eieio-object-class-name buf)
+                           '(slack-message-buffer slack-thread-message-buffer)))
+      (error "Attach files from a message or thread buffer"))
+    (when (>= (length slack-attached-files)
+              slack-max-message-attachment-count)
+      (error "Too many attachments (max %d)"
+             slack-max-message-attachment-count))
+    (let* ((filename (or filename (file-name-nondirectory path)))
+           (file (make-instance 'slack-message-compose-buffer-file
+                                :path path :filename filename)))
+      (setq slack-attached-files (append slack-attached-files (list file)))
+      (slack-attached-files--refresh-overlay)
+      (message "Attached %s (%d file(s) queued; send to upload)"
+               filename (length slack-attached-files)))))
+
+(defun slack-file-attach (&optional file filename)
+  "Attach a file to the current message draft; it uploads when you send.
+Mirrors the Slack app: queue one or more files, keep editing the
+message, then send to upload them as attachments to that message.
+Use `slack-file-attach-list' to review and `slack-file-attach-clear' to
+remove them.
+When called non-interactively, FILE is the path and FILENAME is the
+display name (defaults to the basename of FILE)."
+  (interactive
+   (let* ((path (expand-file-name (car (find-file-read-args "Select File: " t))))
+          (filename (read-from-minibuffer "Filename: "
+                                         (file-name-nondirectory path))))
+     (list path filename)))
+  (slack-file-attach-path file filename))
+
+(defun slack-file-attach-list ()
+  "Show the files queued for attachment in the current buffer."
+  (interactive)
+  (if slack-attached-files
+      (message "Attached files: %s"
+               (mapconcat (lambda (f) (oref f filename))
+                          slack-attached-files ", "))
+    (message "No files attached")))
+
+(defun slack-file-attach-clear ()
+  "Clear the files queued for attachment in the current buffer."
+  (interactive)
+  (setq slack-attached-files nil)
+  (slack-attached-files--refresh-overlay)
+  (message "Cleared attached files"))
+
+(defface slack-attached-files-header-face
+  '((t (:foreground "#2aa198" :weight bold)))
+  "Face for the attached-files overlay header."
+  :group 'slack)
+
+(defface slack-attached-files-file-face
+  '((t (:foreground "#268bd2")))
+  "Face for file names in the attached-files overlay."
+  :group 'slack)
+
+(defface slack-attached-files-remove-face
+  '((t (:foreground "#dc322f" :weight bold)))
+  "Face for the remove button in the attached-files overlay."
+  :group 'slack)
+
+(defvar-local slack-attached-files-overlay nil
+  "Overlay displaying `slack-attached-files' above the lui prompt.
+Its `before-string' shows the queued files with clickable remove buttons.")
+
+(defun slack-attached-files--remove-button (file)
+  "Return a clickable \"remove\" button string for FILE.
+Clicking it removes FILE from `slack-attached-files'."
+  (let ((map (make-sparse-keymap))
+        (action (lambda (&optional _event)
+                  (interactive)
+                  (slack-file-attach-remove-file file))))
+    (define-key map [mouse-1] action)
+    (define-key map (kbd "RET") action)
+    (propertize " x"
+                'face 'slack-attached-files-remove-face
+                'mouse-face 'highlight
+                'keymap map
+                'help-echo "mouse-1: remove this file from the draft")))
+
+(defun slack-attached-files--format ()
+  "Return the before-string describing `slack-attached-files'."
+  (if (null slack-attached-files)
+      ""
+    (concat (propertize (format "Attached (%d): " (length slack-attached-files))
+                        'face 'slack-attached-files-header-face)
+            (mapconcat
+             (lambda (file)
+               (concat (propertize (oref file filename)
+                                   'face 'slack-attached-files-file-face)
+                       (slack-attached-files--remove-button file)))
+             slack-attached-files
+             (propertize "  " 'face 'slack-attached-files-header-face))
+            "\n")))
+
+(defun slack-attached-files--refresh-overlay ()
+  "Refresh the attached-files overlay for the current buffer.
+Creates, updates, or removes the overlay anchored at `lui-input-marker'
+so the queued files (with remove buttons) appear just above the prompt."
+  (let ((ov slack-attached-files-overlay))
+    (if (null slack-attached-files)
+        (progn
+          (when (overlayp ov)
+            (delete-overlay ov))
+          (setq slack-attached-files-overlay nil))
+      (let ((pos (if (and (boundp 'lui-input-marker)
+                          (markerp lui-input-marker))
+                     (or (marker-position lui-input-marker) (point-max))
+                   (point-max))))
+        (if (overlayp ov)
+            (move-overlay ov pos pos)
+          (setq ov (make-overlay pos pos))
+          (overlay-put ov 'insertion-type t)
+          (setq slack-attached-files-overlay ov))
+        (overlay-put ov 'before-string (slack-attached-files--format))))))
+
+(defun slack-file-attach-remove-file (file)
+  "Remove FILE (a `slack-message-compose-buffer-file') from the draft queue."
+  (setq slack-attached-files (delq file slack-attached-files))
+  (slack-attached-files--refresh-overlay)
+  (message "Removed %s (%d file(s) left)"
+           (oref file filename) (length slack-attached-files)))
+
+(defun slack--yank-media-extension (type)
+  "Return a file extension for image MIME TYPE (a symbol or string)."
+  (let* ((s (if (symbolp type) (symbol-name type) (format "%s" type)))
+         (ext (and (string-match "image/\\(?:x-\\)?\\([^+;]+\\)" s)
+                   (match-string 1 s))))
+    (cond
+     ((null ext) "dat")
+     ((string= ext "jpeg") "jpg")
+     (t ext))))
+
+(defun slack--yank-media-handler (type data)
+  "Queue yanked media DATA of TYPE onto the current Slack draft.
+TYPE is a MIME type symbol (e.g. `image/png').  DATA is the raw
+binary content from `gui-get-selection'.  The data is written to a
+temp file and attached via `slack-file-attach-path', so it uploads
+when the draft is sent."
+  (let* ((ext (slack--yank-media-extension type))
+         (suffix (concat "." ext))
+         (tmp (make-temp-file "slack-yank" nil suffix))
+         (filename (concat "pasted-image" suffix))
+         (selection-coding-system 'no-conversion)
+         (coding-system-for-write 'binary))
+    (write-region data nil tmp nil 'quiet)
+    (slack-file-attach-path tmp filename)))
+
+(defun slack--yank-media-uri-handler (type data)
+  "Queue image file(s) from a yanked `text/uri-list' onto the current draft.
+DATA is a string of file:// URIs, one per line.  Each URI pointing to
+an image file (by extension) is attached via `slack-file-attach-path';
+non-image URIs are skipped."
+  (ignore type)
+  (let ((count 0))
+    (dolist (line (split-string data "[\r\n]+" t))
+      (let ((uri (string-trim line)))
+        (when (string-prefix-p "file://" uri)
+          (let* ((path (url-unhex-string (substring uri 7)))
+                 (ext (and path (downcase (or (file-name-extension path) ""))))
+                 (image-exts '("png" "jpg" "jpeg" "gif" "webp" "bmp" "svg" "tiff" "tif")))
+            (if (and path (file-exists-p path) (member ext image-exts))
+                (progn
+                  (slack-file-attach-path path (file-name-nondirectory path))
+                  (setq count (1+ count)))
+              (message "Skipping non-image URI: %s" uri))))))
+    (if (zerop count)
+        (message "No image files found in URI list")
+      (message "Attached %d image file(s) from clipboard" count))))
+
 (defun slack--file-upload-v2 (file filename team channel-id &optional initial-comment thread-ts)
   "Upload FILE as FILENAME using the v2 upload API.
 Uses files.getUploadURLExternal + files.completeUploadExternal.
@@ -867,45 +1067,16 @@ INITIAL-COMMENT and THREAD-TS are optional."
       :headers (list (cons "Content-Type" "application/json;charset=utf-8"))
       :success #'on-complete))))
 
-(defun slack-file-upload (file filetype filename)
-  "Uploads FILE with FILETYPE and FILENAME."
-  (interactive
-   (let ((file (expand-file-name (car (find-file-read-args "Select File: " t)))))
-     (list file
-           (slack-file-select-filetype (file-name-extension file))
-           (read-from-minibuffer "Filename: " (file-name-nondirectory file)))))
+(define-obsolete-function-alias 'slack-file-upload 'slack-file-attach
+  "0.0.4" "Use `slack-file-attach' instead; it now queues files to the draft.")
 
-  (slack-if-let*
-      ((buffer slack-current-buffer)
-       (team (slack-buffer-team buffer))
-       (initial-comment (read-from-minibuffer "Message: "))
-       (upload-params (slack-file-upload-params buffer))
-       (channel-id (cdr (assoc "channels" upload-params))))
-      (let ((thread-ts (cdr (assoc "thread_ts" upload-params))))
-        (slack--file-upload-v2 file filename team channel-id
-                               (and (not (string-empty-p initial-comment)) initial-comment)
-                               thread-ts))
-    (error "Call from message buffer or thread buffer")))
-
-(defun slack-file-upload-quick (file channel-id team &optional initial-comment thread-ts)
-  "Uploads FILE with INITIAL-COMMENT on CHANNEL-ID for TEAM for THREAD-TS.
-Default to the current buffer."
-  (interactive
-   (let ((file (expand-file-name (car (find-file-read-args "Select File: " t)))))
-     (list file
-           (if slack-current-buffer
-               (oref (slack-buffer-room slack-current-buffer) id)
-             (error "Call from message buffer or thread buffer"))
-           (slack-buffer-team slack-current-buffer)
-           (read-from-minibuffer "Message: ")
-           (ignore-errors (oref slack-current-buffer thread-ts))
-           )))
-  (slack--file-upload-v2 file (file-name-nondirectory file) team channel-id
-                         (and initial-comment (not (string-empty-p initial-comment)) initial-comment)
-                         thread-ts))
+(define-obsolete-function-alias 'slack-file-upload-quick 'slack-file-attach
+  "0.0.4" "Use `slack-file-attach' instead; it now queues files to the draft.")
 
 (defun slack-clipboard-image-upload ()
-  "Uploads png image from clipboard."
+  "Uploads png image from clipboard.
+Obsolete: use `yank-media' or drag-and-drop instead, which queue the
+image onto the current draft."
   (interactive)
 
   (let* ((file (make-temp-file "clip" nil ".png"))
@@ -916,29 +1087,29 @@ Default to the current buffer."
                       (error "No image in CLIPBOARD"))
                   nil file nil 'quiet)
 
-    (slack-file-upload file "png" "image.png")))
+    (slack-file-attach-path file "image.png")))
+(make-obsolete 'slack-clipboard-image-upload
+               "use `yank-media' or drag-and-drop instead."
+               "0.0.4")
 
 ;; support drag and drop
 (defun slack--dnd-upload (uri action)
-  "Upload dropped file to current Slack buffer; return 'copy when handled."
+  "Queue a dropped file onto the current Slack draft; return `copy' when handled.
+The file is attached to the current message or thread buffer draft (uploaded
+on send, like the Slack app).  In other buffer types the attach fails with a
+clear message."
   (ignore action)
   (when (and (boundp 'slack-current-buffer) slack-current-buffer)
     (let* ((path (dnd-get-local-file-name uri t)))
       (when (and path (file-exists-p path))
         (condition-case err
             (let* ((ext (or (file-name-extension path) "dat"))
-                   (tmp (make-temp-file "slack-dnd" nil (concat "." ext)))
-                   (room-id (oref (slack-buffer-room slack-current-buffer) id))
-                   (team (slack-buffer-team slack-current-buffer))
-                   (thread-ts (ignore-errors (oref slack-current-buffer thread-ts)))
-                   (comment (when current-prefix-arg
-                              (read-from-minibuffer "Message: "))))
+                   (tmp (make-temp-file "slack-dnd" nil (concat "." ext))))
               (copy-file path tmp t)
-              (slack-file-upload-quick tmp room-id team comment thread-ts)
+              (slack-file-attach-path tmp (file-name-nondirectory path))
               'copy)
           (error
            (message "Slack DnD upload failed: %s" (error-message-string err))
-           ;; Returning nil lets other handlers try, but we consumed it already.
            'copy))))))
 
 (defun slack-dnd-ensure-first ()

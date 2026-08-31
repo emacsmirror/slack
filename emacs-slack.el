@@ -8,7 +8,7 @@
 ;; - Name: Andrea
 ;;   Email: andrea-dev@hotmail.com
 ;; Keywords: tools
-;; Version: 0.0.3
+;; Version: 0.0.4
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
 ;; the Free Software Foundation, either version 3 of the License, or

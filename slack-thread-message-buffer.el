@@ -157,12 +157,20 @@
           (slack-buffer-update-mark this)))))
 
 
+(defvar slack-attached-files)
+(declare-function slack-attached-files--refresh-overlay "slack-buffer" ())
+
 (cl-defmethod slack-buffer-send-message ((this slack-thread-message-buffer) message)
   (with-slots (thread-ts) this
-    (slack-thread-send-message (slack-buffer-room this)
-                               (slack-buffer-team this)
-                               message
-                               thread-ts)))
+    (let ((files slack-attached-files))
+      (slack-thread-send-message (slack-buffer-room this)
+                                 (slack-buffer-team this)
+                                 message
+                                 thread-ts
+                                 files)
+      (when files
+        (setq slack-attached-files nil)
+        (slack-attached-files--refresh-overlay)))))
 
 (defun slack-thread-send-message (room team message thread-ts &optional files)
   (let ((broadcast (if (eq slack-thread-also-send-to-room 'ask)

@@ -1325,50 +1325,36 @@ users fetched via `users.info' often lack this field."
   "A reply-broadcast message collects mentioned user IDs from text, not
 just the sender."
   (slack-test-setup
-    (let ((msg (slack-message-create
-                (list :type "message"
-                      :subtype "thread_broadcast"
-                      :ts (slack-test-ts 5)
-                      :user "U11111"
-                      :text "Hey <@U22222> and <@U33333>")
-                team
-                channel)))
-      (should (eq 'slack-reply-broadcast-message
-                  (eieio-object-class-name msg)))
-      (let ((ids (slack-message-user-ids msg)))
-        (should (member "U11111" ids))
-        (should (member "U22222" ids))
-        (should (member "U33333" ids))))))
+   (let ((msg (slack-message-create
+               (list :type "message"
+                     :subtype "thread_broadcast"
+                     :ts (slack-test-ts 5)
+                     :user "U11111"
+                     :text "Hey <@U22222> and <@U33333>")
+               team
+               channel)))
+     (should (eq 'slack-reply-broadcast-message
+                 (eieio-object-class-name msg)))
+     (let ((ids (slack-message-user-ids msg)))
+       (should (member "U11111" ids))
+       (should (member "U22222" ids))
+       (should (member "U33333" ids))))))
 
-(load (expand-file-name
-       "slack-export-test.el"
-       (file-name-directory (or load-file-name buffer-file-name)))
-      nil
-      nil)
+(defvar slack-tests-to-run
+  (list
+   "slack-export-test.el"
+   "slack-modeline-test.el"
+   "slack-vip-test.el"
+   "slack-activity-feed-test.el"
+   "slack-group-test.el"
+   "slack-file-attach-test.el"))
 
-(load (expand-file-name
-       "slack-modeline-test.el"
-       (file-name-directory (or load-file-name buffer-file-name)))
-      nil
-      nil)
-
-(load (expand-file-name
-       "slack-vip-test.el"
-       (file-name-directory (or load-file-name buffer-file-name)))
-      nil
-      nil)
-
-(load (expand-file-name
-       "slack-activity-feed-test.el"
-       (file-name-directory (or load-file-name buffer-file-name)))
-      nil
-      nil)
-
-(load (expand-file-name
-       "slack-group-test.el"
-       (file-name-directory (or load-file-name buffer-file-name)))
-      nil
-      nil)
+(dolist (test-file slack-tests-to-run)
+  (load (expand-file-name
+         test-file
+         (file-name-directory (or load-file-name buffer-file-name)))
+        nil
+        nil))
 
 (if noninteractive
     (ert-run-tests-batch-and-exit)

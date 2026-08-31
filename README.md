@@ -174,8 +174,7 @@ Some terminology in the `slack-` functions:
 - `slack-message-embed-channel`
   - use to mention to channel
 - `slack-file-upload`
-  - uploads a file
-  - the command allows to choose many channels via select loop. In order to finish the loop input an empty string. For helm that's <kbd>C+RET</kbd> or <kbd>M+TET</kbd>. In case of Ivy it's <kbd>C+M+j</kbd>.
+  - attach a file to the current message draft; it uploads when you send
 
 ### Tip
 

@@ -75,6 +75,12 @@ should add **no new** warnings, not eliminate the old ones.
   refactor before adding more unrelated functionality.
 - Split tests by functionality into dedicated `test/*-test.el` files; load each
   file from `test/run-test.el` so the standard suite still covers everything.
+- **Versioning & changelog:** bump the `Version:` header in `slack.el` and
+  `emacs-slack.el` for any release-worthy batch of changes. Update
+  `CHANGELOG.org` with Added / Changed / Fixed / Obsolete sections under the
+  new version heading. Use `(make-obsolete ... "VERSION")` and
+  `(define-obsolete-function-alias ... "VERSION")` with the bumped version
+  string, not the old one.
 
 ## Pre-commit hook
 

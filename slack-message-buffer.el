@@ -210,9 +210,14 @@ and forces recomputation of load-more placeholders next time.
       (slack-counts-update team))))
 
 (cl-defmethod slack-buffer-send-message ((this slack-message-buffer) message)
-  (slack-message-send-internal message
-                               (slack-buffer-room this)
-                               (slack-buffer-team this)))
+  (let ((files slack-attached-files))
+    (slack-message-send-internal message
+                                 (slack-buffer-room this)
+                                 (slack-buffer-team this)
+                                 :files files)
+    (when files
+      (setq slack-attached-files nil)
+      (slack-attached-files--refresh-overlay))))
 
 (cl-defmethod slack-buffer-latest-ts ((this slack-message-buffer))
   (slack-room-latest (slack-buffer-room this) (slack-buffer-team this)))

@@ -54,7 +54,7 @@ In this context an indentation level is a pair of spaces."
     (floor (/ space-count 2))))
 
 (cl-defun slack-message-send-internal (message room team &key (on-success nil) (on-error nil) (payload nil) (files nil) (joined nil))
-  (when (slack-string-blankp message)
+  (when (and (slack-string-blankp message) (not files))
     (error "Empty message"))
   (if (and (slack-channel-p room)
            (not (oref room is-member))

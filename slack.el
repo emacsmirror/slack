@@ -8,7 +8,7 @@
 ;; - Name: Andrea
 ;;   Email: andrea-dev@hotmail.com
 ;; Keywords: tools
-;; Version: 0.0.3
+;; Version: 0.0.4
 ;; Package-Requires: ((websocket "1.12") (request "0.3.2") (circe "2.11") (alert "1.2") (emojify "1.2.0") (emacs "25.1") (dash "2.19.1") (s "1.13.0") (ts "0.3"))
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by

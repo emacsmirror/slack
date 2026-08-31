@@ -1,0 +1,112 @@
+#+TITLE: Changelog
+#+OPTIONS: ^:nil
+
+All notable changes to this project will be documented in this file.
+
+* 0.0.4 (unreleased)
+
+** Added
+
+- VIP / priority user support: golden =[VIP]= badge, add/remove commands
+  (~slack-vip-add~ / ~slack-vip-remove~), filtering in message headers,
+  @mentions, Block Kit, and profile buffers
+- Activity feed views: filter by all, unreads, VIP, VIP unreads, threads,
+  threads unreads, mentions unreads, and starred (~slack-activity-feed-show~,
+  ~slack-activity-feed-switch-view~ bound to =v=)
+- Non-blocking activity feed: lazy async message body population with
+  ~(loading message...)~ placeholders replaced on fetch completion
+- Group / MPIM creation from an IM buffer: pre-populate with current DM users
+  and add more (~slack-group-mpim-open-from-current~)
+- Draft-then-send file upload flow: attach files to the draft with =C-c C-f=
+  (~slack-file-attach~), review with ~slack-file-attach-list~, clear with
+  ~slack-file-attach-clear~; files upload on send, mirroring the Slack app
+- Visual overlay showing queued files with clickable remove buttons above the
+  prompt
+- ~yank-media~ handler for clipboard images (Emacs 29+): pasted images are
+  queued to the draft automatically
+- ~text/uri-list~ handler for file-manager copies: image files copied from a
+  file manager are queued to the draft via ~yank-media~
+- Drag-and-drop queues files to the draft instead of uploading immediately
+- Gap markers in channel buffers to load older messages bidirectionally
+  (~slack-buffer-fill-gap~)
+- Export capabilities for Slack buffers (~slack-export~)
+- Block Kit support: layout header, plan, table, timeline, citation, video,
+  canvas, message_mention, attachment_mention, and rich-text blocks
+- Saved for later / starred messages support with actions in the star buffer
+- Scheduled messages management
+- Remind for later support (~slack-reminder.el~ cleanup)
+- User status reset and expiration
+- Usergroup users list and update
+- Muted channels parsing (~users.prefs.get~)
+- Snippet preview in file upload
+- Rounded corners for images using SVG clip-path
+- Opening original images by clicking on image preview
+- Kill URLs hidden behind a button with =w= key
+- Fetch users not loaded at startup
+- Active status / presence icon on user selection when mentioning
+- Option to ignore Slack previews
+- File download location prompt, streamlined UX, and error surfacing
+- Curl options for request.el (~slack-request-curl-options~)
+- Activity feed debugging facility
+- Default team on ~slack-start~
+- Pagination and resilience for activity feed
+- Present-in active icon
+
+** Changed
+
+- Modeline respects subscribed channels list (red only for subscribed unreads)
+- ~slack-file-upload~, ~slack-file-upload-quick~, and
+  ~slack-clipboard-image-upload~ now queue to the draft instead of uploading
+  immediately and prompting for a message in the minibuffer
+- DnD handler queues to draft in all buffer types
+- File upload migrated from deprecated ~files.upload~ to v2 API
+  (~files.getUploadURLExternal~ + ~files.completeUploadExternal~)
+- Downgrade =emojify= to 1.2.0 and =s.el= to 1.13.0 for MELPA compatibility
+- Default to loading older messages when a message is not in buffer
+- Default to =chrono_reads_and_unreads= mode for activity feed
+- Show only unread by default for activity feed
+- More detailed timestamps in buffer
+- Eieio object creation pattern updated
+- Bullet list indentation simplified
+- Rich-text block parsing more lenient with block-id
+- Better support for channel purpose and topic; channel info easier to check
+- Face for mrkdwn lists
+- Don't use cookie jar (cookie added explicitly for requests)
+- Improved testing facilities
+
+** Fixed
+
+- Network failure recovery
+- Cached cookie deletion at ~slack-start~
+- Go to main room from first message of a thread
+- Star buffer error handling on retrieval
+- URL with text when editing messages
+- Store URLs right before opening websocket
+- Enterprise token preference in activity feed requests
+- =slack-current-team= nil handling in activity feed
+- Channel fallback, thread-ts nil, and open-message for non-threaded items
+- =@nil= display for uncached users in rich text blocks
+- Attachment rendering to include section blocks
+- File downloads saved outside ~slack-file-dir~
+- Original filename casing preserved on download
+- Regression on downloading default emojis
+- Force stop fix
+- Circular dependency
+- Dark-gray color name issue
+- =:is_open= no longer exists on IM conversations
+- Room counts updated after latest read mark is set
+- =slack-file-upload~ works with text files (txt type)
+- Shared message fix
+- Rate limiting for conversation list
+- MPIM count bug
+
+** Obsolete
+
+- ~slack-file-upload~ — use ~slack-file-attach~ instead (same draft-then-send
+  behavior; bound to =C-c C-f=)
+- ~slack-file-upload-quick~ — use ~slack-file-attach~ instead
+- ~slack-clipboard-image-upload~ — use ~yank-media~ or drag-and-drop instead
+
+* 0.0.3 (2024-11-18)
+
+- Bump version
