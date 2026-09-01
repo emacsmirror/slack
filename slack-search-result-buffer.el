@@ -162,11 +162,20 @@
     (let ((lui-time-stamp-position nil))
       (lui-insert "(no more messages)\n" t))))
 
-(defun slack-search-from-messages (query)
+(defun slack-search-from-messages (&optional query team sort sort-dir)
+  "Search Slack messages.
+
+Interactively, seed QUERY from the active region and prompt for TEAM,
+SORT and SORT-DIR.  When called from Lisp any of the four arguments
+that are non-nil are used as-is, so a caller can bind a search to a
+key without any minibuffer interaction, e.g.
+
+  (slack-search-from-messages \"from:@me\" team \"timestamp\" \"desc\")."
   (interactive
    (list (when (region-active-p)
            (substring-no-properties (funcall region-extract-function)))))
-  (cl-destructuring-bind (team query sort sort-dir) (slack-search-query-params query)
+  (cl-destructuring-bind (team query sort sort-dir)
+      (slack-search-query-params query team sort sort-dir)
     (let ((instance (make-instance 'slack-search-result
                                    :sort sort
                                    :sort-dir sort-dir
@@ -177,9 +186,12 @@
                (slack-buffer-display buffer))))
         (slack-search-request instance #'after-success team)))))
 
-(defun slack-search-from-files ()
+(defun slack-search-from-files (&optional query team sort sort-dir)
+  "Search Slack files.  See `slack-search-from-messages' for the
+optional-argument conventions."
   (interactive)
-  (cl-destructuring-bind (team query sort sort-dir) (slack-search-query-params)
+  (cl-destructuring-bind (team query sort sort-dir)
+      (slack-search-query-params query team sort sort-dir)
     (let ((instance (make-instance 'slack-file-search-result
                                    :sort sort
                                    :sort-dir sort-dir

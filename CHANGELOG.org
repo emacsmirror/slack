@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 
 * 0.0.4 (unreleased)
 
+** Changed
+
+- ~slack-search-query-params~, ~slack-search-from-messages~ and
+  ~slack-search-from-files~ now accept optional =team=, =sort= and
+  =sort-dir= arguments (in addition to =query=); nil values still fall
+  back to the interactive prompts.  This lets callers bind static
+  searches to keys without going through the minibuffer.
+
 ** Added
 
 - VIP / priority user support: golden =[VIP]= badge, add/remove commands
