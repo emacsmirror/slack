@@ -25,6 +25,7 @@
 ;;; Code:
 
 (require 'eieio)
+(require 'dash)
 (require 'slack-util)
 (require 'slack-message-sender)
 (require 'slack-message-reaction)
@@ -43,6 +44,95 @@
   ((thread-ts :initarg :thread-ts :type string)
    (has-more :initarg :has-more :type boolean)
    (last-read :initform nil :type (or null string))))
+
+;;; Sync suggestion
+;;
+;; Async threads where the same two or three people alternate replies for a
+;; while often resolve faster with a quick synchronous conversation, because
+;; the round-trips hide the misunderstandings that a two-minute call would
+;; surface.  When a thread crosses a length threshold and its recent
+;; messages alternate that way, the buffer says so, once.
+
+(defcustom slack-thread-suggest-sync nil
+  "When non-nil, long alternating threads get a sync suggestion.
+
+See `slack-thread-suggest-sync-threshold' for the length that
+triggers it."
+  :type 'boolean
+  :group 'slack)
+
+(defcustom slack-thread-suggest-sync-threshold 10
+  "Number of messages a thread must exceed before the buffer
+suggests having a sync instead."
+  :type 'integer
+  :group 'slack)
+
+(defconst slack-thread-suggest-sync-window 8
+  "How many of the most recent messages are checked for
+alternation between a few people.")
+
+(defconst slack-thread-suggest-sync-string
+  "(This thread has become a long back-and-forth between a few people: would it be better to have a sync at this point?)"
+  "Text inserted as the sync suggestion in a thread buffer.")
+
+(defface slack-thread-sync-suggestion-face
+  '((t (:foreground "#b58900" :slant italic :height 0.9)))
+  "Face for the sync suggestion in a thread buffer."
+  :group 'slack)
+
+(defun slack-thread--alternating-p (messages)
+  "Return non-nil when MESSAGES alternate between two or three people.
+
+MESSAGES are the most recent thread messages, oldest first.
+Alternating means nobody sends two messages in a row and at most
+three people take part in the exchange.  Messages without a sender
+(system messages and placeholders) are ignored; if that leaves
+fewer than `slack-thread-suggest-sync-window' messages, return
+nil."
+  (let* ((senders (-keep (lambda (m)
+                           (let ((id (slack-message-sender-id m)))
+                             (unless (slack-string-blankp id) id)))
+                         messages)))
+    (and (>= (length senders) slack-thread-suggest-sync-window)
+         (<= 2 (length (-distinct senders)) 3)
+         (-all-p (lambda (pair)
+                   (not (string= (car pair) (cdr pair))))
+                 (-zip-pair senders (cdr senders))))))
+
+(defun slack-thread--suggest-sync-p (message room)
+  "Return non-nil when MESSAGE's thread in ROOM calls for a sync.
+
+That is: the thread is longer than
+`slack-thread-suggest-sync-threshold' messages and its most recent
+messages alternate between two or three people."
+  (and slack-thread-suggest-sync
+       (slack-if-let* ((replies (slack-message-replies message room)))
+           (let ((messages (cons message replies)))
+             (and (> (length messages) slack-thread-suggest-sync-threshold)
+                  (slack-thread--alternating-p
+                   (-take-last slack-thread-suggest-sync-window messages)))))))
+
+(defun slack-thread-message-buffer--maybe-suggest-sync (this)
+  "Insert the sync suggestion in THIS's buffer when the thread calls for it.
+
+The suggestion is inserted at most once per buffer, so later
+messages arriving in an already long thread do not repeat it."
+  (when slack-thread-suggest-sync
+    (slack-if-let* ((room (slack-buffer-room this))
+                    (message (slack-room-find-message room (oref this thread-ts))))
+        (when (slack-thread--suggest-sync-p message room)
+          (let ((buffer (slack-buffer-buffer this)))
+            (when (and (buffer-live-p buffer)
+                       (not (with-current-buffer buffer
+                              (text-property-any (point-min) (point-max)
+                                                 'slack-thread-sync-suggestion t))))
+              (with-current-buffer buffer
+                (let ((lui-time-stamp-position nil))
+                  (lui-insert (propertize
+                               (concat slack-thread-suggest-sync-string "\n")
+                               'face 'slack-thread-sync-suggestion-face
+                               'slack-thread-sync-suggestion t)
+                              t)))))))))
 
 (defun slack-create-thread-message-buffer (room team thread-ts &optional has-more)
   "Create thread message buffer according to ROOM, TEAM, THREAD-TS."
@@ -97,6 +187,7 @@
                              do (slack-buffer-insert this m t))
                     (slack-buffer-update-last-read this latest-message)
                     (slack-buffer-update-mark this)))
+              (slack-thread-message-buffer--maybe-suggest-sync this)
               (when (slack-buffer-has-next-page-p this)
                 (slack-buffer-insert-load-more this))))))
     buf))
@@ -154,7 +245,8 @@
                    do (when (string< last-read (slack-ts m))
                         (slack-buffer-insert this m t)))
           (slack-buffer-update-last-read this latest-message)
-          (slack-buffer-update-mark this)))))
+          (slack-buffer-update-mark this)
+          (slack-thread-message-buffer--maybe-suggest-sync this)))))
 
 
 (defvar slack-attached-files)
@@ -227,7 +319,8 @@
       (with-current-buffer buffer
         (slack-buffer-insert this message))
       (slack-buffer-update-last-read this message)
-      (slack-buffer-update-mark this))))
+      (slack-buffer-update-mark this)
+      (slack-thread-message-buffer--maybe-suggest-sync this))))
 
 (cl-defmethod slack-buffer-display-edit-message-buffer ((this slack-thread-message-buffer) ts)
   (let* ((team (slack-buffer-team this))

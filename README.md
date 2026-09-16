@@ -175,6 +175,11 @@ Some terminology in the `slack-` functions:
   - use to mention to channel
 - `slack-file-upload`
   - attach a file to the current message draft; it uploads when you send
+- thread sync suggestion: when a thread exceeds
+  `slack-thread-suggest-sync-threshold` messages (default 20) and the
+  recent ones alternate between two or three people, the thread buffer
+  shows a one-time hint that a quick sync might resolve things faster;
+  turn it off with `slack-thread-suggest-sync`
 
 ### Tip
 

@@ -94,6 +94,24 @@
   :type 'boolean
   :group 'slack)
 
+(defcustom slack-loading-message-string "(loading message...)"
+  "Shown in place of a message while it is being fetched.
+
+Buffers that populate messages asynchronously (the activity feed
+and the saved-for-later buffer) render this until the real content
+arrives."
+  :type 'string
+  :group 'slack)
+
+(defcustom slack-unavailable-message-string "(message unavailable)"
+  "Shown when a message cannot be retrieved.
+
+A saved message can disappear from Slack (deleted, or from a
+channel the team lost access to); this replaces its loading
+placeholder so the buffer does not wait forever."
+  :type 'string
+  :group 'slack)
+
 (defmacro slack-buffer-widen (&rest body)
   `(save-excursion
      (save-restriction

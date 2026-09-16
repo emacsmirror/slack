@@ -317,7 +317,7 @@ ACTIVITY-TYPE is the activity type string (e.g. \"thread_reply\")."
                                            (error-message-string msg-err))
                                   nil))
                                (if (or ts thread-ts)
-                                   (propertize "(loading message...)"
+                                   (propertize slack-loading-message-string
                                                'activity-pending ts)
                                  "TODO")))
                       'ts ts
@@ -388,7 +388,7 @@ once the body is available, so opening the feed never blocks."
              (when (buffer-live-p live-buf)
                (let ((body (if fetched
                                 (slack-message-body fetched team)
-                              "(message unavailable)")))
+                              slack-unavailable-message-string)))
                  (slack-activity-feed--replace-placeholder
                   live-buf msg team body))))))))))
 

@@ -5,8 +5,26 @@ All notable changes to this project will be documented in this file.
 
 * 0.0.4 (unreleased)
 
+** Fixed
+
+- Saved-for-later items that only exist as thread replies now resolve: the
+  channel history call cannot see them and used to answer with the nearest
+  older message, leaving the ~(loading message...)~ placeholder behind (and,
+  before the async conversion, silently rendering the wrong message).
+  ~slack-message-get-or-fetch-async~ now detects the timestamp mismatch and
+  anchors a second ~conversations.replies~ call at the requested timestamp,
+  which Slack resolves to the reply itself.  A fetch that finds nothing
+  replaces the placeholder with the shared
+  ~slack-unavailable-message-string~ notice instead of waiting forever.
+
 ** Changed
 
+- The saved-for-later (stars) buffer is fully non-blocking: saved messages
+  render as placeholders that are filled in as the fetches complete.  The
+  placeholder text is the shared ~slack-loading-message-string~ defcustom,
+  now also used by the activity feed.  The blocking
+  ~slack-message-get-or-fetch~ has been removed; use
+  ~slack-message-get-or-fetch-async~ instead.
 - ~slack-search-query-params~, ~slack-search-from-messages~ and
   ~slack-search-from-files~ now accept optional =team=, =sort= and
   =sort-dir= arguments (in addition to =query=); nil values still fall
@@ -15,6 +33,11 @@ All notable changes to this project will be documented in this file.
 
 ** Added
 
+- Sync suggestion in thread buffers (~slack-thread-suggest-sync~, on by
+  default): when a thread is longer than
+  ~slack-thread-suggest-sync-threshold~ messages (default 20) and the most
+  recent ones alternate between two or three people, the buffer shows a
+  one-time hint that a quick sync might resolve things faster.
 - VIP / priority user support: golden =[VIP]= badge, add/remove commands
   (~slack-vip-add~ / ~slack-vip-remove~), filtering in message headers,
   @mentions, Block Kit, and profile buffers

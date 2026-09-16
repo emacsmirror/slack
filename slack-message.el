@@ -347,51 +347,21 @@
                                         (if append-p (append (oref message replies) replies)
                                           replies)))))
 
-(defun slack-message-get-or-fetch (ts room-id team &optional thread-ts)
-  "Get a message given a TS a ROOM-ID and TEAM, optionally a THREAD-TS.
-Be aware: this is a blocking call because we need to call the api to fetch the
-message. Given only the ts, we have to guess if it is in a thread
-or not."
-  (let* ((thread-ts (or thread-ts ts))
-         (room (slack-room-find room-id team))
-         (message (condition-case err
-                      (slack-room-find-message room ts)
-                    (error
-                     (message "error in: %s" (error-message-string err))
-                     nil)))
-         (thread-ts-in-halves (s-split "\\." thread-ts))
-         (thread-ts-second-half (nth 1 thread-ts-in-halves)))
-    ;; TODO this block is time consuming! We could retrieve these messages in parallel using the same waiting mechanism (accept-process-output,) but waiting on the list of messages. Needs to be done in caller, possibly passing the messages as an optional context parameter.
-    (or message
-        (-some--> (if (and thread-ts-second-half
-                           (not (string-equal ts thread-ts)))
-                      ;; When TS belongs to a thread reply, fetch via replies
-                      ;; using THREAD-TS (parent) to anchor.
-                      (slack-conversations-replies room ts team
-                                                   :inclusive "true"
-                                                   :limit "1"
-                                                   :sync t)
-                    ;; Otherwise fetch from channel history at TS
-                    (slack-conversations-history room team
-                                                 :latest ts
-                                                 :inclusive "true"
-                                                 :limit "1"
-                                                 :sync t))
-          (oref it response)
-          (request-response-data it)
-          (plist-get it :messages)
-          (nth 0 it)
-          (slack-message-create it team room)))
-    ))
-
 (defun slack-message-get-or-fetch-async (ts room-id team &optional thread-ts after-success)
   "Get message for TS in ROOM-ID of TEAM, fetching asynchronously if needed.
 If the message is already cached locally, call AFTER-SUCCESS immediately
 with it.  Otherwise dispatch a non-blocking `conversations.history' (or
 `conversations.replies' for thread replies) and call AFTER-SUCCESS with
 the fetched message (or nil if nothing came back) when it arrives.
-THREAD-TS anchors a thread reply fetch (defaults to TS).  Unlike
-`slack-message-get-or-fetch', this never blocks Emacs."
+THREAD-TS anchors a thread reply fetch (defaults to TS).  This never
+blocks Emacs: when the message is not cached, the API call runs in the
+background and AFTER-SUCCESS runs on completion.
+
+A message that only exists as a thread reply is not visible in channel
+history: the history call then answers with the nearest older message
+instead.  When that happens, a second fetch is anchored at TS with
+`conversations.replies', which accepts any timestamp of a thread, not
+just the root's."
   (let* ((thread-ts (or thread-ts ts))
          (room (slack-room-find room-id team))
          (message (and room
@@ -408,19 +378,34 @@ THREAD-TS anchors a thread reply fetch (defaults to TS).  Unlike
           (when (functionp after-success)
             (funcall after-success nil))
         (cl-labels
-            ((on-messages (messages &rest _)
+            ((deliver (msg)
+               (when msg
+                 (slack-room-push-message room msg team))
+               (when (functionp after-success)
+                 (funcall after-success msg)))
+             (on-thread-messages (messages &rest _)
+               ;; `conversations.replies' answers with the whole thread
+               ;; when anchored at a root, so pick the requested message.
+               (deliver (-find (lambda (m) (string= (slack-ts m) ts))
+                               messages)))
+             (on-messages (messages &rest _)
                (let ((msg (and (consp messages) (nth 0 messages))))
-                 (when msg
-                   (slack-room-push-message room msg team))
-                 (when (functionp after-success)
-                   (funcall after-success msg)))))
+                 (if (and msg (not (string= (slack-ts msg) ts)))
+                     ;; TS is not visible in channel history, so it most
+                     ;; likely belongs to a thread reply: anchor a second
+                     ;; fetch at TS itself.
+                     (slack-conversations-replies room ts team
+                                                  :after-success
+                                                  #'on-thread-messages)
+                   (deliver msg)))))
           (if (and thread-ts-second-half
                    (not (string-equal ts thread-ts)))
-              ;; When TS belongs to a thread reply, fetch via replies.
+              ;; When TS belongs to a thread reply, fetch via replies
+              ;; using THREAD-TS (parent) to anchor.
               (slack-conversations-replies room ts team
                                            :inclusive "true"
                                            :limit "1"
-                                           :after-success #'on-messages)
+                                           :after-success #'on-thread-messages)
             ;; Otherwise fetch from channel history at TS.
             (slack-conversations-history room team
                                          :latest ts

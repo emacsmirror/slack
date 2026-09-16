@@ -109,7 +109,7 @@
 
 (ert-deftest slack-activity-feed-test-render-uncached-no-block ()
   "An activity whose message is not in the local cache renders a
-placeholder instead of calling the blocking `slack-message-get-or-fetch'."
+placeholder without dispatching any fetch at all."
   (slack-test-setup
     (oset team id "T00001")
     (let* ((am (make-instance 'activity-message
@@ -119,7 +119,7 @@ placeholder instead of calling the blocking `slack-message-get-or-fetch'."
                               :thread-ts nil
                               :author-id "U0"))
            (called nil))
-      (cl-letf (((symbol-function 'slack-message-get-or-fetch)
+      (cl-letf (((symbol-function 'slack-message-get-or-fetch-async)
                  (lambda (&rest _) (setq called t) nil)))
         (let ((rendered (slack-activity-message-to-string am team "thread_v2")))
           (should (string-match-p "loading message" rendered))
@@ -142,7 +142,7 @@ without fetching from the network."
                               :author-id "U0"))
            (called nil))
       (puthash ts msg (oref channel messages))
-      (cl-letf (((symbol-function 'slack-message-get-or-fetch)
+      (cl-letf (((symbol-function 'slack-message-get-or-fetch-async)
                  (lambda (&rest _) (setq called t) nil)))
         (let ((rendered (slack-activity-message-to-string am team "thread_v2")))
           (should (string-match-p "hello body" rendered))
