@@ -1,0 +1,74 @@
+;;; slack-emoji-test.el --- tests for the emoji sync and shortcode rule -*- lexical-binding: t; -*-
+
+;;; Commentary:
+
+;; The workspace emoji list contains emojis with purely numeric names
+;; (`:00:', `:100:', `:404:', ...).  Once those are synced into
+;; `emojify-user-emojis', emojify substitutes every `:00:' it sees,
+;; including the one inside the timestamp 17:00:00.  The Slack app only
+;; substitutes shortcodes that stand on their own;
+;; `slack-emoji-shortcode-standalone-p' reproduces that rule.
+
+;;; Code:
+(require 'ert)
+(require 'slack-emoji)
+
+(defun slack-emoji-test--00-range (text start)
+  "Return (START . END) buffer positions of a \":00:\" in TEXT.
+START is the 0-based index to search from; the returned positions are
+1-based buffer positions for a buffer holding exactly TEXT."
+  (let ((rel (string-match ":00:" text start)))
+    (should rel)
+    (cons (1+ rel) (+ rel 5))))
+
+(ert-deftest slack-emoji-test/shortcode-inside-timestamp ()
+  "The `:00:' inside 17:00:00 is not a standalone shortcode."
+  (with-temp-buffer
+    (setq major-mode 'slack-fake-mode)
+    (let* ((text "fired at 17:00:00Z and :00: alone")
+           (in-ts (slack-emoji-test--00-range text 0))
+           (standalone (slack-emoji-test--00-range text (cdr in-ts))))
+      (insert text)
+      (should-not (slack-emoji-shortcode-standalone-p
+                   nil ":00:" (current-buffer)
+                   (car in-ts) (cdr in-ts)))
+      (should (slack-emoji-shortcode-standalone-p
+                nil ":00:" (current-buffer)
+                (car standalone) (cdr standalone))))))
+
+(ert-deftest slack-emoji-test/shortcode-at-buffer-edges ()
+  "A shortcode at bob/eob stands on its own."
+  (with-temp-buffer
+    (setq major-mode 'slack-fake-mode)
+    (insert ":00:")
+    (should (slack-emoji-shortcode-standalone-p
+             nil ":00:" (current-buffer) 1 5))))
+
+(ert-deftest slack-emoji-test/shortcode-embedded-both-sides ()
+  "Word characters on either side disqualify the shortcode."
+  (with-temp-buffer
+    (setq major-mode 'slack-fake-mode)
+    (insert "a:00: and :00:5")
+    ;; leading word char: "a:00:"
+    (should-not (slack-emoji-shortcode-standalone-p
+                 nil ":00:" (current-buffer) 2 6))
+    ;; trailing word char: ":00:5"
+    (should-not (slack-emoji-shortcode-standalone-p
+                 nil ":00:" (current-buffer) 11 15))))
+
+(ert-deftest slack-emoji-test/non-slack-buffer-untouched ()
+  "Outside slack buffers emojify keeps its default behaviour."
+  (with-temp-buffer
+    (insert "17:00:00")
+    (should (slack-emoji-shortcode-standalone-p
+             nil ":00:" (current-buffer) 3 7))))
+
+(ert-deftest slack-emoji-test/non-shortcode-text-untouched ()
+  "Composed text from emojify's second phase is never a shortcode."
+  (with-temp-buffer
+    (insert "thumbs up")
+    (should (slack-emoji-shortcode-standalone-p
+             nil "👍" (current-buffer) 1 4))))
+
+(provide 'slack-emoji-test)
+;;; slack-emoji-test.el ends here

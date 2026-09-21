@@ -51,6 +51,47 @@
 (defvar slack-emoji-job-interval 10 "How many seconds have to pass in between batch processing.")
 (defvar slack-emoji-all nil "List of all emojis found.")
 
+(defvar slack-emoji--shortcode-boundary-rule nil
+  "Non-nil once the standalone-shortcode rule is installed in emojify.")
+
+(defun slack-emoji-shortcode-standalone-p (_emoji text buffer start end &optional _target)
+  "Return non-nil if the `:name:' shortcode TEXT may be displayed as an emoji.
+
+START and END are the buffer positions of TEXT in BUFFER.  The Slack
+app only substitutes shortcodes that stand on their own, so the
+`:00:' inside the timestamp 17:00:00 stays plain text.  emojify has
+no such rule: once a workspace emoji with a numeric name (`:00:',
+`:100:', `:404:', ...) is synced into `emojify-user-emojis', every
+timestamp, duration and version number in a message gets mangled.
+Apply the same boundary rule as the Slack app, in slack buffers
+only: a shortcode counts only when neither the character before it
+nor the one after it is a letter or digit."
+  (if (not (string-prefix-p ":" text))
+      ;; not a `:name:' shortcode (emojify's composed-text phase);
+      ;; leave it alone
+      t
+    (with-current-buffer buffer
+      (or (not (string-prefix-p "slack-" (symbol-name major-mode)))
+          (let ((prev (and (> start (point-min))
+                           (char-after (1- start))))
+                (next (and (< end (point-max))
+                           (char-after end))))
+            (and (or (null prev)
+                     (not (string-match-p "[[:alnum:]]" (string prev))))
+                 (or (null next)
+                     (not (string-match-p "[[:alnum:]]" (string next))))))))))
+
+(defun slack-emoji-install-shortcode-boundary-rule ()
+  "Teach emojify to only substitute standalone shortcodes in slack buffers.
+See `slack-emoji-shortcode-standalone-p' for why this is needed.
+Idempotent."
+  (unless slack-emoji--shortcode-boundary-rule
+    (setq slack-emoji--shortcode-boundary-rule t)
+    ;; emojify offers no public hook for this; advice on its propertize
+    ;; entry point is the narrowest interception available.
+    (advice-add 'emojify--propertize-text-for-emoji :before-while
+                #'slack-emoji-shortcode-standalone-p)))
+
 (defun slack-emoji-run-job ()
   "Run first job of `slack-emoji-jobs-to-run'."
   (if-let ((job-to-run (-first-item slack-emoji-jobs-to-run)))
@@ -65,6 +106,9 @@
   "Download TEAM emojis and run AFTER-SUCCESS on the downloaded paths.
 This runs asynchronously, splitting the emojis in batches of `slack-emoji-job-batch-size,' every `slack-emoji-job-interval' seconds."
   (when (and (require 'emojify nil t) (eq slack-emoji-jobs-to-run nil))
+    ;; workspace emoji names (numeric ones in particular) must not
+    ;; substitute inside timestamps and the like
+    (slack-emoji-install-shortcode-boundary-rule)
     ;; create slack image file directory if it doesn't exist, otherwise curl complains
     (ignore-errors (mkdir slack-image-file-directory 'parent-if-needed))
     (cl-labels

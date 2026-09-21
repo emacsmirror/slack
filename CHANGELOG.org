@@ -7,6 +7,13 @@ All notable changes to this project will be documented in this file.
 
 ** Fixed
 
+- Timestamps like ~17:00:00~ render as plain text again.  Workspaces with
+  numerically named emoji (~:00:~, ~:100:~, ~:404:~, ...) made emojify
+  substitute the ~:00:' embedded in every timestamp, duration and version
+  number once the workspace emoji list was synced into
+  ~emojify-user-emojis~.  emojify is now advised (in slack buffers only) to
+  substitute a shortcode only when it stands on its own, the same rule the
+  Slack app applies; see ~slack-emoji-shortcode-standalone-p~.
 - Saved-for-later items that only exist as thread replies now resolve: the
   channel history call cannot see them and used to answer with the nearest
   older message, leaving the ~(loading message...)~ placeholder behind (and,

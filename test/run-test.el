@@ -1354,6 +1354,7 @@ just the sender."
    "slack-org-alert-test.el"
    "slack-message-test.el"
    "slack-stars-test.el"
+   "slack-emoji-test.el"
    "slack-thread-message-buffer-test.el"))
 
 (dolist (test-file slack-tests-to-run)
