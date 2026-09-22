@@ -1,8 +1,8 @@
 ;;; slack-block-composition.el --- Block Kit composition objects  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2019
+;; Copyright (C) 2026
 
-;; Author:  <yuya373@archlinux>
+;; Author:  Andrea <andrea-dev@hotmail.com>
 ;; Keywords:
 
 ;; This program is free software; you can redistribute it and/or modify

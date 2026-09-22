@@ -3,6 +3,18 @@
 
 All notable changes to this project will be documented in this file.
 
+* 0.0.5 (unreleased)
+
+** Changed
+
+- ~slack-block.el~ split into per-concern modules: ~slack-block-util.el~,
+  ~slack-block-composition.el~, ~slack-block-element.el~,
+  ~slack-block-rich-text-element.el~, ~slack-block-rich-text.el~,
+  ~slack-block-layout.el~, ~slack-block-plan.el~, ~slack-block-table.el~,
+  ~slack-block-timeline.el~, and ~slack-block-video.el~.  ~slack-block.el~
+  remains the umbrella entry point and still provides ~slack-block~, so
+  =(require 'slack-block)= keeps working unchanged.
+
 * 0.0.4 (unreleased)
 
 ** Fixed
