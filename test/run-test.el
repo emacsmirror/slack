@@ -1,3 +1,5 @@
+;;; run-test.el --- ERT test suite runner -*- lexical-binding: t; -*-
+
 (require 'ert)
 (require 'slack-team)
 (require 'slack-channel)
@@ -1355,6 +1357,7 @@ just the sender."
    "slack-message-test.el"
    "slack-stars-test.el"
    "slack-emoji-test.el"
+   "slack-room-buffer-test.el"
    "slack-thread-message-buffer-test.el"))
 
 (dolist (test-file slack-tests-to-run)

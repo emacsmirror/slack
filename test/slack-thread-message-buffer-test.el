@@ -57,7 +57,9 @@ turns, and nothing else."
 (ert-deftest slack-thread-test-suggest-sync-p ()
   "`slack-thread--suggest-sync-p' fires for long alternating threads only."
   (slack-test-setup
-    (let* ((root (make-instance 'slack-user-message
+    ;; the feature is off by default; the logic is what is under test here
+    (let* ((slack-thread-suggest-sync t)
+           (root (make-instance 'slack-user-message
                                 :user "U0"
                                 :ts (slack-test-ts 0)
                                 :channel channel-id
@@ -72,8 +74,8 @@ turns, and nothing else."
                    (lambda (&rest _) current-replies)))
           ;; 26 messages, alternating: suggests a sync
           (should (slack-thread--suggest-sync-p root channel))
-          ;; the threshold is exclusive: 20 messages total do not trigger it
-          (setq current-replies (butlast alternating 6))
+          ;; the threshold is exclusive: 10 messages total do not trigger it
+          (setq current-replies (butlast alternating 16))
           (should (not (slack-thread--suggest-sync-p root channel)))
           ;; disabled by the defcustom
           (let (slack-thread-suggest-sync)
@@ -95,7 +97,9 @@ turns, and nothing else."
 marking it, and later checks do not duplicate it."
   (slack-test-setup
     (oset team id "T00001")
-    (let* ((root (make-instance 'slack-user-message
+    ;; the feature is off by default; the insertion logic is what is under test
+    (let* ((slack-thread-suggest-sync t)
+           (root (make-instance 'slack-user-message
                                 :user "U0"
                                 :ts (slack-test-ts 0)
                                 :channel channel-id

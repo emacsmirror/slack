@@ -32,8 +32,17 @@
 (require 'websocket)
 (require 'dash)
 
-(defvar slack-completing-read-function)
-(defvar slack-buffer-function)
+(defvar slack-completing-read-function #'completing-read
+  "Function used to read a value from the minibuffer.
+It is called with the same arguments as `completing-read'; set it to
+an `ivy'- or `helm'-style function to use that completion UI.")
+
+(defvar slack-buffer-function #'switch-to-buffer
+  "Function used to display a slack buffer.")
+
+;; The defaults above must carry values: a bare (defvar x) byte-compiles
+;; to nothing, so the compiled modules would leave the variables void and
+;; let-bindings from lexically-bound files would not reach their users.
 (defvar slack-next-page-token "[Next page]")
 (defvar slack-current-buffer)
 

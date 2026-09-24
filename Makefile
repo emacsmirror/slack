@@ -13,7 +13,7 @@
 #   make clean       — remove .elc files
 
 EMACS     ?= $(shell command -v emacs 2>/dev/null)
-ELPA_DIR  ?= $(XDG_CACHE_HOME:.=$(HOME)/.cache)/emacs-slack/elpa
+ELPA_DIR  ?= $(if $(XDG_CACHE_HOME),$(XDG_CACHE_HOME),$(HOME)/.cache)/emacs-slack/elpa
 EL_FILES  := $(wildcard *.el)
 ELC_FILES := $(EL_FILES:.el=.elc)
 

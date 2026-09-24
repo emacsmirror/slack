@@ -35,6 +35,7 @@
 (require 'dash)
 (declare-function emojify-mode "emojify")
 (declare-function slack-open-message "slack-message-buffer")
+(declare-function slack-open-url-or-browse-url "slack-room-buffer" (url))
 (declare-function yank-media-handler "yank-media" (types handler))
 (declare-function url-unhex-string "url-util" (str &optional allow-newlines))
 
@@ -535,7 +536,7 @@ placeholder so the buffer does not wait forever."
                                 (+ (1- url-begin) (length replace))
                                 'type 'lui-button
                                 'action 'lui-button-activate
-                                'lui-button-function 'browse-url
+                                'lui-button-function 'slack-open-url-or-browse-url
                                 'lui-button-arguments (list url))
               ;; add local keymap to kill url instead of just opening with RET
               (put-text-property (1- url-begin)

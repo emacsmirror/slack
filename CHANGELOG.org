@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 
 * 0.0.5 (unreleased)
 
+** Fixed
+
+- Message links and buttons whose URL is a Slack permalink (mrkdwn and
+  rich-text links, Block Kit buttons, legacy attachment buttons, e.g. the
+  ~Request~ link some bots post) open in emacs-slack instead of the system
+  browser.  Their URLs are now handed to ~slack-open-url-or-browse-url~,
+  which sends ~*.slack.com/archives/...~ permalinks to ~slack-open-url~
+  and leaves every other URL, and permalinks of teams not registered in
+  emacs-slack, to ~browse-url~.
+- The test suite is green again: the sync-suggestion tests had failed ever
+  since the feature landed because they assumed the feature enabled while
+  ~slack-thread-suggest-sync~ defaults to nil, and checked a threshold
+  boundary of 20 while ~slack-thread-suggest-sync-threshold~ is 10.  They
+  now enable the feature explicitly and check the actual boundary.
+- ~slack-buffer-function~ and ~slack-completing-read-function~ now carry
+  their intended defaults (~switch-to-buffer~, ~completing-read~).  They
+  were bare ~defvar~ declarations, which byte-compile to nothing: loading
+  the compiled modules left both variables void at runtime, and
+  let-binding them from a lexically-bound file did not reach the code
+  using them (surfaced by the test suite's new ~lexical-binding~ cookie).
+
 ** Changed
 
 - ~slack-block.el~ split into per-concern modules: ~slack-block-util.el~,
@@ -52,9 +73,9 @@ All notable changes to this project will be documented in this file.
 
 ** Added
 
-- Sync suggestion in thread buffers (~slack-thread-suggest-sync~, on by
+- Sync suggestion in thread buffers (~slack-thread-suggest-sync~, off by
   default): when a thread is longer than
-  ~slack-thread-suggest-sync-threshold~ messages (default 20) and the most
+  ~slack-thread-suggest-sync-threshold~ messages (default 10) and the most
   recent ones alternate between two or three people, the buffer shows a
   one-time hint that a quick sync might resolve things faster.
 - VIP / priority user support: golden =[VIP]= badge, add/remove commands
