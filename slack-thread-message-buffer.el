@@ -299,19 +299,25 @@ messages arriving in an already long thread do not repeat it."
   (slack-if-let* ((team (slack-buffer-team this))
                   (room (slack-buffer-room this))
                   (message (slack-room-find-message room ts)))
-      (slack-star-api-request slack-message-stars-add-url
-                              (append  (list (cons "channel" (oref room id)))
-                                       (slack-message-star-api-params message due-in-ms))
-                              team)))
+      (slack-star-api-request-message
+       slack-message-stars-add-url
+       (append  (list (cons "channel" (oref room id)))
+                (slack-message-star-api-params message due-in-ms))
+       team
+       message
+       t)))
 
 (cl-defmethod slack-buffer-remove-star ((this slack-thread-message-buffer) ts)
   (slack-if-let* ((team (slack-buffer-team this))
                   (room (slack-buffer-room this))
                   (message (slack-room-find-message room ts)))
-      (slack-star-api-request slack-message-stars-remove-url
-                              (append (list (cons "channel" (oref room id)))
-                                      (slack-message-star-api-params message))
-                              team)))
+      (slack-star-api-request-message
+       slack-message-stars-remove-url
+       (append (list (cons "channel" (oref room id)))
+               (slack-message-star-api-params message))
+       team
+       message
+       nil)))
 
 (cl-defmethod slack-buffer-update ((this slack-thread-message-buffer) message &key replace)
   (if replace (slack-buffer-replace this message)

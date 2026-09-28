@@ -58,6 +58,21 @@
   "Face used to deleted message."
   :group 'slack)
 
+(defface slack-starred-message-face
+  '((((class color) (background light)) (:background "#fff3c4"))
+    (((class color) (background dark)) (:background "#3a3320"))
+    (t (:underline t)))
+  "Face used to starred (saved for later) messages.
+A pale amber wash echoing the star, light enough on either background
+for the message's own colors to stay readable on top of it."
+  :group 'slack)
+
+;; `:extend' draws the wash across the whole line, so a multi-line
+;; message reads as one block.  It only exists from Emacs 27 on, and
+;; the package still supports 25.1.
+(when (>= emacs-major-version 27)
+  (set-face-attribute 'slack-starred-message-face nil :extend t))
+
 (defface slack-attachment-header
   '((t (:inherit slack-message-output-header)))
   "Face used to shared message header."
@@ -128,6 +143,16 @@
 (defun slack-message-put-deleted-property (text)
   (if text
       (propertize text 'face 'slack-message-deleted-face)))
+
+(defun slack-message-put-starred-property (text)
+  "Add the starred (saved for later) background face to TEXT.
+The face is appended so per-substring faces (mentions, headers,
+reactions) keep their own colors on top of the highlight."
+  (if text
+      (let ((copy (copy-sequence text)))
+        (add-face-text-property 0 (length copy)
+                                'slack-starred-message-face 'append copy)
+        copy)))
 
 (defun slack-put-preview-overlay (start end)
   (let ((overlay (make-overlay start end)))

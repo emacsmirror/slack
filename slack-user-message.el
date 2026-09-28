@@ -89,10 +89,13 @@ prepend the sender to ensure both are fetched."
 (cl-defmethod slack-buffer-add-star ((this slack-user-message) _ts &optional due-in-ms)
   (slack-if-let* ((team slack-current-team)
                   (message this))
-      (slack-star-api-request slack-message-stars-add-url
-                              (append  (list (cons "channel" (oref this channel)))
-                                       (slack-message-star-api-params message due-in-ms))
-                              team)))
+      (slack-star-api-request-message
+       slack-message-stars-add-url
+       (append  (list (cons "channel" (oref this channel)))
+                (slack-message-star-api-params message due-in-ms))
+       team
+       message
+       t)))
 
 (provide 'slack-user-message)
 ;;; slack-user-message.el ends here

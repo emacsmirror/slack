@@ -54,6 +54,23 @@
     (define-key keymap [mouse-1] #'slack-reaction-toggle)
     keymap))
 
+;; `slack-star' is not required here: it pulls in the buffer layer,
+;; which is built on this formatter.
+(declare-function slack-team-saved-message-p "slack-star"
+                  (team ts &optional room-id))
+
+(defun slack-message-highlight-starred-p (message team)
+  "Non-nil when MESSAGE should be drawn with the starred highlight.
+A message saved before this session carries nothing on its own
+`is-starred' slot, since the history payload does not repeat the saved
+state, so TEAM's saved for later list is consulted as well."
+  (and slack-highlight-starred-messages
+       (or (slack-message-starred-p message)
+           (and (fboundp 'slack-team-saved-message-p)
+                (slack-team-saved-message-p team
+                                            (slack-ts message)
+                                            (oref message channel))))))
+
 (cl-defgeneric slack-buffer-toggle-reaction (buffer reaction))
 
 (defun slack-reaction-toggle ()
@@ -103,19 +120,23 @@
                                (slack-message-reactions m)
                                " "))
          (thread (slack-thread-to-string m team)))
-    (propertize
-     (slack-format-message (propertize header
-                                       'slack-message-header t)
-                           (if (oref m deleted-at)
-                               (slack-message-put-deleted-property body)
-                             body)
-                           files
-                           attachment
-                           (if (slack-string-blankp reactions) reactions
-                             (concat "\n" reactions))
-                           (if (slack-string-blankp thread) thread
-                             (concat "\n" thread)))
-     'permalink (oref m permalink))))
+    (let ((text
+           (propertize
+            (slack-format-message (propertize header
+                                              'slack-message-header t)
+                                  (if (oref m deleted-at)
+                                      (slack-message-put-deleted-property body)
+                                    body)
+                                  files
+                                  attachment
+                                  (if (slack-string-blankp reactions) reactions
+                                    (concat "\n" reactions))
+                                  (if (slack-string-blankp thread) thread
+                                    (concat "\n" thread)))
+            'permalink (oref m permalink))))
+      (if (slack-message-highlight-starred-p m team)
+          (slack-message-put-starred-property text)
+        text))))
 
 (cl-defmethod slack-file-deleted-p ((file slack-file))
   (let ((mode (oref file mode)))

@@ -993,6 +993,11 @@ represent activity."
                        ;; (slack-user-list-update team)
                        (slack-dnd-status-team-info team)
                        (slack-vip-list-update team)
+                       ;; the saved for later list is the only source of
+                       ;; the starred state: `conversations.history' does
+                       ;; not carry `is_starred' since saved items
+                       ;; replaced stars
+                       (slack-stars-list-request team)
                        (when slack-buffer-emojify
                          (slack-download-emoji team #'on-emoji-download))
                        (slack-command-list-update team)

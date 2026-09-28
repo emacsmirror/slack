@@ -26,6 +26,7 @@
 (require 'eieio)
 (require 'slack-util)
 (require 'slack-request)
+(require 'slack-log)
 (require 'slack-team)
 (require 'slack-file)
 (require 'slack-buffer)
@@ -95,6 +96,18 @@
                    :items (reverse items)
                    :cursor cursor)))
 
+(defun slack-team-saved-message-p (team ts &optional room-id)
+  "Return t when TEAM has a saved for later item for the message at TS.
+ROOM-ID, when given, must match the item's channel: a timestamp only
+identifies a message within its own room.  Messages saved before this
+session are only known through this list, so it is what the starred
+highlight is drawn from."
+  (slack-if-let* ((star (oref team star)))
+      (--any-p (and (string= (oref it ts) ts)
+                    (or (null room-id)
+                        (string= (oref it item-id) room-id)))
+               (slack-star-items star))))
+
 (defun slack-stars-list-request (team &optional cursor after-success)
   (cl-labels
       ((callback ()
@@ -124,11 +137,18 @@
       :data (list (when cursor (cons "cursor" cursor)))
       :success #'on-success))))
 
-(defun slack-star-api-request (url params team)
+(defun slack-star-api-request (url params team &optional success-msg after-success)
+  "Send the stars API request for URL with PARAMS to TEAM.
+On a successful response log SUCCESS-MSG at info level, so the user
+knows the change landed, and call AFTER-SUCCESS; both are optional."
   (cl-labels
       ((on-success (&key data &allow-other-keys)
          (slack-request-handle-error
-          (data url))))
+          (data url)
+          (when success-msg
+            (slack-log success-msg team :level 'info))
+          (when (functionp after-success)
+            (funcall after-success)))))
     (slack-request
      (slack-request-create
       url
@@ -136,8 +156,25 @@
       :params params
       :success #'on-success))))
 
-(cl-defmethod slack-star-remove-star ((this slack-star) ts team)
-  "Remove from THIS stars the star at TS for TEAM."
+(defun slack-star-api-request-message (url params team message starred-p)
+  "Send the stars API request for URL with PARAMS to TEAM for MESSAGE.
+STARRED-P is the state MESSAGE will be in once the request succeeds:
+the message is flipped to it and its buffers are redrawn, so the
+starred highlight shows up without waiting for a star event."
+  (slack-star-api-request
+   url params team
+   (if starred-p
+       "Successfully starred message."
+     "Successfully unstarred message.")
+   (lambda ()
+     (if starred-p
+         (slack-message-star-added message)
+       (slack-message-star-removed message))
+     (slack-message-replace-buffer message team))))
+
+(cl-defmethod slack-star-remove-star ((this slack-star) ts team &optional after-success)
+  "Remove from THIS stars the star at TS for TEAM.
+AFTER-SUCCESS runs once the removal is confirmed."
   (slack-if-let* ((item
                    (--find
                     (string= (oref it ts) ts)
@@ -146,7 +183,16 @@
                               (list (cons "ts" ts)
                                     (cons "item_id" (oref item item-id))
                                     (cons "item_type" (oref item item-type)))
-                              team)
+                              team
+                              "Successfully unstarred message."
+                              (lambda ()
+                                ;; keep the local model in sync, the star
+                                ;; events this used to rely on are legacy
+                                (oset this items
+                                      (--remove (string= (oref it ts) ts)
+                                                (oref this items)))
+                                (when (functionp after-success)
+                                  (funcall after-success))))
     (error "Could not find star to remove for ts")))
 
 

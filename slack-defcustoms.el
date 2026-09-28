@@ -87,5 +87,14 @@ useful information."
   :type 'boolean
   :group 'slack)
 
+(defcustom slack-highlight-starred-messages t
+  "Highlight starred (saved for later) messages when set.
+Starred messages are drawn with `slack-starred-message-face' in
+message, thread and search buffers.  The saved for later buffer binds
+this to nil: every message there is saved, so the highlight would
+cover the whole buffer without telling the reader anything."
+  :type 'boolean
+  :group 'slack)
+
 (provide 'slack-defcustoms)
 ;;; slack-defcustoms.el ends here

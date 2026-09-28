@@ -8,9 +8,11 @@
 (require 'slack-star)
 (require 'slack-message)
 
-(defun slack-stars-test--star-item (ts room-id)
+(defun slack-stars-test--star-item (ts room-id &optional item-type)
   "A saved item for the message with TS in ROOM-ID."
-  (make-instance 'slack-star-item :item-id room-id :ts ts))
+  (make-instance 'slack-star-item :item-id room-id
+                 :item-type (or item-type "message")
+                 :ts ts))
 
 (defun slack-stars-test--insert-dummy-line ()
   "Insert a filler message so tested messages are not the first one.
@@ -266,5 +268,222 @@ non-blocking fetch and keeps the ts text property."
           (should (slack-buffer-ts-eq (point-min) (point-max)
                                      (slack-test-ts 2)))))
       (kill-buffer buffer))))
+
+(ert-deftest slack-stars-test-api-request-logs-and-notifies-on-success ()
+  "A successful stars API request logs an info message and runs the
+after-success callback, so the user knows the change landed."
+  (slack-test-setup
+    (oset team id "T00001")
+    (let ((logged nil)
+          (ran nil))
+      (cl-letf (((symbol-function 'slack-request)
+                 (lambda (req)
+                   ;; only the HTTP layer is stubbed: the request object
+                   ;; still goes through `slack-request-create'
+                   (funcall (oref req success) :data '(:ok t))))
+                ((symbol-function 'slack-log)
+                 (lambda (msg _team &rest rest)
+                   (push (list msg (plist-get rest :level)) logged))))
+        (slack-star-api-request "https://slack.com/api/saved.add" nil
+                                team
+                                "Successfully starred message."
+                                (lambda () (push :ran ran))))
+      (should (equal (list (list "Successfully starred message." 'info))
+                     logged))
+      (should (equal '(:ran) ran)))))
+
+(ert-deftest slack-stars-test-api-request-silent-on-error ()
+  "A failed stars API request logs nothing and runs no callback."
+  (slack-test-setup
+    (oset team id "T00001")
+    (let ((logged nil)
+          (ran nil))
+      (cl-letf (((symbol-function 'slack-request)
+                 (lambda (req)
+                   (funcall (oref req success)
+                            :data '(:ok :json-false :error "not_allowed"))))
+                ((symbol-function 'slack-log)
+                 (lambda (&rest _) (push :logged logged))))
+        (slack-star-api-request "https://slack.com/api/saved.add" nil
+                                team
+                                "Successfully starred message."
+                                (lambda () (push :ran ran))))
+      (should (null logged))
+      (should (null ran)))))
+
+(ert-deftest slack-stars-test-api-request-message-updates-and-rerenders ()
+  "Starring a message flips its saved state and redraws its buffers;
+unstarring clears it again.  Both log what happened at info level."
+  (slack-test-setup
+    (oset team id "T00001")
+    (let* ((ts (slack-test-ts 1))
+           (message (make-instance 'slack-message :ts ts
+                                              :channel channel-id
+                                              :text "hi"))
+           (replaced nil)
+           (logged nil))
+      (cl-letf (((symbol-function 'slack-request)
+                 (lambda (req)
+                   (funcall (oref req success) :data '(:ok t))))
+                ((symbol-function 'slack-log)
+                 (lambda (msg _team &rest rest)
+                   (push (list msg (plist-get rest :level)) logged)))
+                ((symbol-function 'slack-message-replace-buffer)
+                 (lambda (m _team) (push (slack-ts m) replaced))))
+        (slack-star-api-request-message "https://slack.com/api/saved.add"
+                                        nil team message t)
+        (should (slack-message-starred-p message))
+        (should (equal (list ts) replaced))
+        (slack-star-api-request-message "https://slack.com/api/saved.delete"
+                                        nil team message nil)
+        (should (not (slack-message-starred-p message)))
+        (should (equal (list ts ts) replaced))
+        (should (equal (list (list "Successfully unstarred message." 'info)
+                             (list "Successfully starred message." 'info))
+                       logged))))))
+
+(ert-deftest slack-stars-test-room-buffer-add-star-requests-and-updates ()
+  "Starring from a room buffer sends saved.add with the channel and the
+message timestamp, and flips the message's saved state on success."
+  (slack-test-with-registered-team (team channel)
+    (let* ((ts (slack-test-ts 1))
+           (message (slack-test-message team channel ts "star me"))
+           (requests nil)
+           (replaced nil))
+      (slack-room-set-messages channel (list message) team)
+      (cl-letf (((symbol-function 'slack-request)
+                 (lambda (req)
+                   (push (list (oref req url) (oref req params)) requests)
+                   (funcall (oref req success) :data '(:ok t))))
+                ((symbol-function 'slack-log)
+                 (lambda (&rest _) nil))
+                ((symbol-function 'slack-message-replace-buffer)
+                 (lambda (m _team) (push (slack-ts m) replaced))))
+        (slack-buffer-add-star
+         (make-instance 'slack-message-buffer
+                        :team-id "T99999"
+                        :room-id "C99999")
+         ts))
+      (should (equal (list (list slack-message-stars-add-url
+                                  (list (cons "item_id" "C99999")
+                                        (cons "ts" ts)
+                                        (cons "item_type" "message"))))
+                     requests))
+      (should (slack-message-starred-p message))
+      (should (equal (list ts) replaced)))))
+
+(ert-deftest slack-stars-test-remove-star-syncs-model-and-buffer ()
+  "Removing a star drops the saved item on success and deletes its line
+from the stars buffer, without waiting for a star event."
+  (slack-test-setup
+    (oset team id "T00001")
+    (oset team star
+          (make-instance 'slack-star
+                         :items (list (slack-stars-test--star-item
+                                       (slack-test-ts 2) channel-id)
+                                      (slack-stars-test--star-item
+                                       (slack-test-ts 3) channel-id))))
+    (let* ((buffer (generate-new-buffer " *test-stars*"))
+           (stars (slack-stars-buffer :team-id (oref team id))))
+      (with-current-buffer buffer
+        (lui-mode)
+        (lui-set-prompt "test> ")
+        (slack-stars-test--insert-dummy-line)
+        (let ((lui-time-stamp-position nil))
+          (lui-insert-with-text-properties "saved message 2\n"
+                                           'ts (slack-test-ts 2))
+          (lui-insert-with-text-properties "saved message 3\n"
+                                           'ts (slack-test-ts 3))))
+      (cl-letf (((symbol-function 'slack-buffer-team) (lambda (_) team))
+                ((symbol-function 'slack-buffer-buffer) (lambda (_) buffer))
+                ((symbol-function 'slack-request)
+                 (lambda (req)
+                   (funcall (oref req success) :data '(:ok t))))
+                ((symbol-function 'slack-log) (lambda (&rest _) nil)))
+        (slack-buffer-remove-star stars (slack-test-ts 2)))
+      (should (equal (list (slack-test-ts 3))
+                     (mapcar #'slack-ts (slack-star-items (oref team star)))))
+      (with-current-buffer buffer
+        (should (not (string-match-p "saved message 2" (buffer-string))))
+        (should (string-match-p "saved message 3" (buffer-string)))
+        (should (not (slack-buffer-ts-eq (point-min) (point-max)
+                                         (slack-test-ts 2)))))
+      (kill-buffer buffer))))
+
+(defun slack-stars-test--faces-at (text pos)
+  "The face property of TEXT at POS, always as a list."
+  (let ((faces (get-text-property pos 'face text)))
+    (if (listp faces) faces (list faces))))
+
+(defun slack-stars-test--highlighted-p (text)
+  "Is TEXT drawn with the starred highlight?"
+  (and (memq 'slack-starred-message-face
+             (slack-stars-test--faces-at text 0))
+       t))
+
+(ert-deftest slack-stars-test-starred-message-is-highlighted ()
+  "A starred message renders with the starred face on top of its other
+faces; an unstarred one does not.  The :star: header marker stays so the
+highlight is not the only cue."
+  (slack-test-setup
+    (oset team id "T00001")
+    (let* ((message (slack-test-message team channel (slack-test-ts 1) "hi"))
+           (plain (slack-message-to-string message team)))
+      (should (not (slack-stars-test--highlighted-p plain)))
+      (slack-message-star-added message)
+      (let ((starred (slack-message-to-string message team)))
+        (should (slack-stars-test--highlighted-p starred))
+        (should (string-match-p ":star:" starred))
+        ;; the header face survives on top of the highlight
+        (should (memq 'slack-message-output-header
+                      (slack-stars-test--faces-at starred 0)))))))
+
+(ert-deftest slack-stars-test-saved-list-drives-highlight ()
+  "Messages saved before this session carry nothing on their own slot,
+so the highlight comes from the team's saved for later list.  A saved
+timestamp only counts for the room it was saved in."
+  (slack-test-setup
+    (oset team id "T00001")
+    (let ((message (slack-test-message team channel (slack-test-ts 1) "hi"))
+          (other (slack-test-message team channel (slack-test-ts 2) "ho")))
+      (should (not (slack-message-starred-p message)))
+      (oset team star
+            (make-instance 'slack-star
+                           :items (list (slack-stars-test--star-item
+                                         (slack-test-ts 1) channel-id))))
+      (should (slack-stars-test--highlighted-p
+               (slack-message-to-string message team)))
+      (should (not (slack-stars-test--highlighted-p
+                    (slack-message-to-string other team))))
+      ;; same timestamp, a room the message does not belong to
+      (oset team star
+            (make-instance 'slack-star
+                           :items (list (slack-stars-test--star-item
+                                         (slack-test-ts 1) "C99999"))))
+      (should (not (slack-stars-test--highlighted-p
+                    (slack-message-to-string message team)))))))
+
+(ert-deftest slack-stars-test-highlight-can-be-turned-off ()
+  "`slack-highlight-starred-messages' nil drops the highlight, and the
+stars buffer turns it off for itself: every message there is saved."
+  (slack-test-setup
+    (oset team id "T00001")
+    (let ((message (slack-test-message team channel (slack-test-ts 1) "hi")))
+      (slack-message-star-added message)
+      (let ((slack-highlight-starred-messages nil))
+        (should (not (slack-stars-test--highlighted-p
+                      (slack-message-to-string message team)))))
+      (with-temp-buffer
+        (slack-stars-buffer-mode)
+        (should (not slack-highlight-starred-messages))
+        (should (not (slack-stars-test--highlighted-p
+                      (slack-message-to-string message team))))))))
+
+(ert-deftest slack-stars-test-refresh-buffer-bound-to-g ()
+  "Both g and G refresh the stars buffer."
+  (should (eq 'slack-stars-refresh-buffer
+              (lookup-key slack-stars-buffer-mode-map "g")))
+  (should (eq 'slack-stars-refresh-buffer
+              (lookup-key slack-stars-buffer-mode-map "G"))))
 
 ;;; slack-stars-test.el ends here

@@ -33,7 +33,10 @@
 (require 'slack-star)
 (require 'slack-message)
 
-(define-derived-mode slack-stars-buffer-mode slack-buffer-mode "Slack Stars Buffer")
+(define-derived-mode slack-stars-buffer-mode slack-buffer-mode "Slack Stars Buffer"
+  ;; every message here is saved for later, so the starred highlight
+  ;; would cover the whole buffer without telling the reader anything
+  (setq-local slack-highlight-starred-messages nil))
 
 (defclass slack-stars-buffer (slack-buffer)
   ((oldest :type string :initform "")))
@@ -197,7 +200,10 @@ finds nothing must still clear the placeholder."
   "Remove THIS star at TS."
   (let ((team (slack-buffer-team this)))
     (with-slots (star) team
-      (slack-star-remove-star star ts team))))
+      (slack-star-remove-star
+       star ts team
+       (lambda ()
+         (slack-buffer-message-delete this ts))))))
 
 (cl-defmethod slack-buffer-message-delete ((this slack-stars-buffer) ts)
   (let ((buffer (slack-buffer-buffer this))
@@ -258,6 +264,7 @@ finds nothing must still clear the placeholder."
   (kill-buffer)
   (slack-stars-list))
 (define-key slack-stars-buffer-mode-map (kbd "G") 'slack-stars-refresh-buffer)
+(define-key slack-stars-buffer-mode-map (kbd "g") 'slack-stars-refresh-buffer)
 
 (provide 'slack-stars-buffer)
 ;;; slack-stars-buffer.el ends here

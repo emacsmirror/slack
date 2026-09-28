@@ -26,8 +26,30 @@ All notable changes to this project will be documented in this file.
   let-binding them from a lexically-bound file did not reach the code
   using them (surfaced by the test suite's new ~lexical-binding~ cookie).
 
+** Added
+
+- Starred (saved for later) messages are highlighted in message, thread
+  and search buffers with the new ~slack-starred-message-face~, a pale
+  amber wash (light and dark variants) applied on top of the existing
+  per-message faces, so saved messages stand out while scrolling.  The
+  saved for later buffer itself does not highlight, since every message
+  there is saved; ~slack-highlight-starred-messages~ turns the highlight
+  off everywhere.  The state comes from the team's saved for later list,
+  now fetched when a team connects: ~conversations.history~ stopped
+  carrying ~is_starred~ when saved items replaced stars, so the message
+  payload alone cannot tell whether a message was saved.
+- The stars buffer binds =g= to ~slack-stars-refresh-buffer~ in addition
+  to =G=.
+
 ** Changed
 
+- Starring or unstarring a message now logs the outcome at info level
+  (~Successfully starred message.~ / ~Successfully unstarred message.~)
+  once the API confirms it, so the change is not silent: the message's
+  saved state is also updated locally and its buffers redrawn right away
+  (the star RTM events this used to rely on are legacy).  Removing a star
+  from the stars buffer deletes its line as soon as the removal is
+  confirmed instead of waiting for the next refresh.
 - ~slack-block.el~ split into per-concern modules: ~slack-block-util.el~,
   ~slack-block-composition.el~, ~slack-block-element.el~,
   ~slack-block-rich-text-element.el~, ~slack-block-rich-text.el~,
