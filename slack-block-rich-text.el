@@ -1,4 +1,4 @@
-;;; slack-block-rich-text.el --- Block Kit rich text blocks  -*- lexical-binding: t; -*-
+;;; slack-block-rich-text.el --- Block Kit rich text blocks  -*- lexical-binding: ; -*-
 
 ;; Copyright (C) 2026
 
