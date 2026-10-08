@@ -33,6 +33,16 @@ You need to install `language-detection' for this to work."
   :type 'boolean
   :group 'slack)
 
+(defface slack-block-fixed-pitch-face
+  '((t (:inherit fixed-pitch)))
+  "Face for blocks whose layout depends on character-cell alignment.
+Applied as an overlay to source blocks and tables, so it should supply
+only the font family: the colors and weights set by the block itself
+(font-lock faces, `slack-table-border-face', …) are merged on top of it.
+Without it, buffers using a proportional font (via `buffer-face-mode' or
+`variable-pitch-mode') render these blocks misaligned."
+  :group 'slack)
+
 (defface slack-block-highlight-source-overlay-face
   '((((class grayscale) (background light))
      :foreground "DimGray" :weight bold)

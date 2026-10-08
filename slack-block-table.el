@@ -123,14 +123,24 @@ without a `block_id'), or something else we don't yet understand."
                                                               " "
                                                               border)))
                                      )))
-        (concat hline "\n"
-                (funcall format-row (car rendered-rows) t) "\n"
-                hline "\n"
-                (mapconcat #'(lambda (row) (funcall format-row row nil))
-                           (cdr rendered-rows)
-                           (concat "\n"))
-                (when (cdr rendered-rows) "\n")
-                 hline)))))
+        ;; Cell widths are computed with `string-width', so the table only
+        ;; lines up in a fixed-pitch font.  Tag each line separately (the
+        ;; newlines in between end the property run) rather than the whole
+        ;; table at once, so `slack-add-face-lazy' sees a bounded region.
+        (mapconcat
+         #'(lambda (line)
+             (propertize line
+                         'slack-defer-face
+                         #'(lambda (beg end)
+                             (overlay-put (make-overlay beg end)
+                                          'face 'slack-block-fixed-pitch-face))))
+         (append (list hline
+                       (funcall format-row (car rendered-rows) t)
+                       hline)
+                 (mapcar #'(lambda (row) (funcall format-row row nil))
+                         (cdr rendered-rows))
+                 (list hline))
+         "\n")))))
 
 (provide 'slack-block-table)
 ;;; slack-block-table.el ends here
