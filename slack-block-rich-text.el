@@ -129,11 +129,13 @@
            (lambda (s)
              (propertize
               (if (string= "" s) " " s)
-              'slack-defer-face #'(lambda (beg _end)
+              'slack-defer-face #'(lambda (beg end)
                                     (let ((ov (make-overlay beg beg)))
                                       (overlay-put
                                        ov 'before-string
-                                       (propertize "│" 'face 'slack-block-highlight-source-overlay-face))))))
+                                       (propertize "│" 'face 'slack-block-highlight-source-overlay-face)))
+                                    (overlay-put (make-overlay beg end)
+                                                 'face 'slack-block-fixed-pitch-face))))
            (string-split (string-trim hl-text) "\n"))
           "\n")
          "\n"
