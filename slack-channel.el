@@ -65,6 +65,34 @@
                              team :level 'info)))
       (slack-conversations-list team #'success (list "public_channel")))))
 
+(defun slack-channel-list-update-archived (&optional team after-success)
+  "Add TEAM's archived channels to its room list.
+Archived channels are left out of the regular listing (see
+`slack-exclude-archived-channels'), so they have to be asked for
+explicitly before they can be selected or opened.  AFTER-SUCCESS is
+called with the team once they are in."
+  (interactive)
+  (let ((team (or team (slack-team-select))))
+    (cl-labels
+        ((success (channels groups _ims)
+           (slack-team-set-channels team channels)
+           (slack-team-set-groups team groups)
+           (slack-log (format "Slack Archived Channel List Updated: %s archived"
+                              (length (-filter #'slack-room-archived-p
+                                               (append channels groups))))
+                      team :level 'info)
+           (when (functionp after-success)
+             (funcall after-success team))))
+      (slack-conversations-list team #'success
+                                (list "public_channel" "private_channel")
+                                t))))
+
+(defun slack-channel-archived (team)
+  "TEAM's archived channels and groups."
+  (-filter #'slack-room-archived-p
+           (append (slack-team-channels team)
+                   (slack-team-groups team))))
+
 (defun slack-create-channel ()
   (interactive)
   (let ((team (slack-team-select)))

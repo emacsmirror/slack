@@ -1,7 +1,9 @@
 ;;; slack-room-buffer-test.el --- room buffer tests -*- lexical-binding: t; -*-
 
 ;; Covers how URLs attached to buttons open: a Slack permalink is opened
-;; in emacs-slack (`slack-open-url'), anything else in the browser.
+;; in emacs-slack (`slack-open-url'), anything else in the browser.  Also
+;; covers what `slack-open-url' does with links that name a room rather
+;; than a message, and with rooms emacs-slack has not loaded.
 
 (require 'ert)
 (require 'eieio)
@@ -17,8 +19,8 @@
     (cl-letf (((symbol-function 'slack-open-url) (lambda (url) (push url opened)))
               ((symbol-function 'browse-url) (lambda (&rest _) (push :browsed browsed))))
       (slack-open-url-or-browse-url
-       "https://writerai.slack.com/archives/C0B8JAQN2S2/p1790227143905189")
-      (should (equal (list "https://writerai.slack.com/archives/C0B8JAQN2S2/p1790227143905189")
+       "https://test-team.slack.com/archives/C12345678/p1790227143905189")
+      (should (equal (list "https://test-team.slack.com/archives/C12345678/p1790227143905189")
                      opened))
       (should (null browsed)))))
 
@@ -86,3 +88,73 @@ the permalink with `slack-open-url' instead of the browser."
                             :room-id "C99999")))
           (should (equal (list permalink) opened))
           (should (null browsed)))))))
+
+(ert-deftest slack-room-buffer-test-open-url-room-level-link ()
+  "A link naming a room, with no message part, opens the room itself."
+  (slack-test-with-registered-team (team channel)
+    (let ((displayed nil))
+      (cl-letf (((symbol-function 'slack-room-display)
+                 (lambda (room _team) (push (oref room id) displayed)))
+                ((symbol-function 'slack-open-message)
+                 (lambda (&rest _) (push :message displayed))))
+        (slack-open-url "https://test-team.slack.com/archives/C99999"))
+      (should (equal (list "C99999") displayed)))))
+
+(ert-deftest slack-room-buffer-test-open-url-enterprise-domain ()
+  "An enterprise grid link names the organization, which matches no
+workspace domain, so the team is found through the room it names."
+  (slack-test-with-registered-team (team channel)
+    (let ((displayed nil))
+      (cl-letf (((symbol-function 'slack-room-display)
+                 (lambda (room _team) (push (oref room id) displayed)))
+                ;; a prompt here would mean the room lookup did not work
+                ((symbol-function 'slack-team-select)
+                 (lambda (&rest _) (error "Should not ask which team"))))
+        (slack-open-url
+         "https://example-org.enterprise.slack.com/archives/C99999"))
+      (should (equal (list "C99999") displayed)))))
+
+(ert-deftest slack-room-buffer-test-open-url-fetches-unknown-room ()
+  "A room emacs-slack does not know, an archived channel for instance, is
+fetched before being opened."
+  (slack-test-with-registered-team (team channel)
+    (let ((fetched nil)
+          (displayed nil))
+      (cl-letf (((symbol-function 'slack-conversations-info)
+                 (lambda (room-id team &optional after-success)
+                   (push room-id fetched)
+                   ;; conversations.info caches the room on the team
+                   (slack-team-set-room
+                    team (make-instance 'slack-channel :id room-id :name "archived"))
+                   (funcall after-success)))
+                ((symbol-function 'slack-room-display)
+                 (lambda (room _team) (push (oref room id) displayed))))
+        (slack-open-url "https://test-team.slack.com/archives/C01ARCHIVED"))
+      (should (equal (list "C01ARCHIVED") fetched))
+      (should (equal (list "C01ARCHIVED") displayed)))))
+
+(ert-deftest slack-room-buffer-test-open-url-message-link-still-opens-message ()
+  "A message permalink still lands on the message, not on the room."
+  (slack-test-with-registered-team (team channel)
+    (let ((opened nil))
+      (cl-letf (((symbol-function 'slack-open-message)
+                 (lambda (_team room ts thread-ts)
+                   (push (list (oref room id) ts thread-ts) opened)))
+                ((symbol-function 'slack-room-display)
+                 (lambda (&rest _) (push :room opened))))
+        (slack-open-url
+         "https://test-team.slack.com/archives/C99999/p1730182493679269"))
+      (should (equal (list (list "C99999" "1730182493.679269" "1730182493.679269"))
+                     opened)))))
+
+(ert-deftest slack-room-buffer-test-room-level-link-is-opened-in-emacs-slack ()
+  "Clicking a link to a channel opens it in emacs-slack, not the browser."
+  (let ((opened nil)
+        (browsed nil))
+    (cl-letf (((symbol-function 'slack-open-url) (lambda (url) (push url opened)))
+              ((symbol-function 'browse-url) (lambda (&rest _) (push :browsed browsed))))
+      (slack-open-url-or-browse-url
+       "https://example-org.enterprise.slack.com/archives/C12345678")
+      (should (equal (list "https://example-org.enterprise.slack.com/archives/C12345678")
+                     opened))
+      (should (null browsed)))))

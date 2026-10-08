@@ -648,31 +648,45 @@ Note the input timestamp must drop the last 6 digits.
     (use-local-map newmap)))
 
 
+(defconst slack-permalink-regexp
+  "\\`https://\\(.*\\)\\.slack\\.com/\\(?:[^/]*/\\)?archives/\\([^/?#]+\\)\\(?:/p\\([0-9]+\\)\\)?"
+  "Regexp matching a Slack permalink.
+Subexpression 1 is the team domain, 2 the room id and 3 the message
+timestamp.  A room-level link stops at the room id and has no
+timestamp.  The domain is whatever stands before =.slack.com=, so it
+also covers enterprise grid links, whose host is
+=<organization>.enterprise.slack.com=.")
+
 (defun slack-permalink-to-info (permalink)
   "Turn Slack PERMALINK into (:team-domain :room-id :ts :thread-ts).
+A room-level permalink, one without the /p<timestamp> part, gives :ts
+and :thread-ts nil.  PERMALINK that is not a Slack link gives nil.
 
 >> (slack-permalink-to-info \"https://clojurians.slack.com/x-p0731283237333-1533439499937-7343247531848/archives/C099W16KZ/p1730182493679269\")
 => (:team-domain \"clojurians\" :room-id \"C099W16KZ\" :ts \"1730182493.679269\" :thread-ts \"1730182493.679269\")
 >> (slack-permalink-to-info \"https://clojurians.slack.com/archives/C099W16KZ/p1730182493679269?thread_ts=1730182493.679269&cid=C099W16KZ\")
-=> (:team-domain \"clojurians\" :room-id \"C099W16KZ\" :ts \"1730182493.679269\" :thread-ts \"1730182493.679269\")"
+=> (:team-domain \"clojurians\" :room-id \"C099W16KZ\" :ts \"1730182493.679269\" :thread-ts \"1730182493.679269\")
+>> (slack-permalink-to-info \"https://clojurians.slack.com/archives/C099W16KZ\")
+=> (:team-domain \"clojurians\" :room-id \"C099W16KZ\" :ts nil :thread-ts nil)"
   (with-demoted-errors "slack-permalink-to-info: failed with %S"
-    (let* ((_ (string-match "https://\\(.*\\).slack.com/\\(?:[^/]*/\\)?archives/\\(.*\\)/p\\(.*\\)" permalink))
-           (team-domain (match-string 1 permalink))
-           (room-id (match-string 2 permalink))
-           (ts-s (match-string 3 permalink))
-           (ts (--> ts-s
-                    (s-split "?" it)
-                    (car it)
-                    (concat (substring it 0 (- (length it) 6)) "." (substring it (- (length it) 6) (length it)))))
-           (thread-ts (if (string-match "thread_ts=\\([0-9]*\\.[0-9]*\\)" ts-s)
-                          (match-string 1 ts-s)
-                        ts)))
-      (list
-       :team-domain team-domain
-       :room-id room-id
-       :ts ts
-       :thread-ts thread-ts
-       ))))
+    (when (string-match slack-permalink-regexp permalink)
+      (let* ((team-domain (match-string 1 permalink))
+             (room-id (match-string 2 permalink))
+             (digits (match-string 3 permalink))
+             (ts (when digits
+                   (concat (substring digits 0 (- (length digits) 6))
+                           "."
+                           (substring digits (- (length digits) 6)))))
+             ;; this match clobbers the groups above, so read them first
+             (thread-ts (if (and ts (string-match "thread_ts=\\([0-9]*\\.[0-9]*\\)"
+                                                  permalink))
+                            (match-string 1 permalink)
+                          ts)))
+        (list
+         :team-domain team-domain
+         :room-id room-id
+         :ts ts
+         :thread-ts thread-ts)))))
 
 (defun slack-info-to-permalink (info)
   "Turn Slack INFO (:team-domain :room-id :ts :thread-ts) into permalink.

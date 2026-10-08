@@ -1191,6 +1191,25 @@ Reads the `user-id' text property placed on mention text by
                 team)))
     (slack-room-display room team)))
 
+(defun slack-channel-select-archived ()
+  "Select an archived channel to display.
+Archived channels count as hidden rooms, so the regular selection leaves
+them out; they are fetched first, then offered on their own.  Once
+fetched they stay in the team for the session, which is also what lets
+`slack-open-url' open a link to an archived channel."
+  (interactive)
+  (message "Fetching archived slack channel asynchronously..." )
+  (let ((team (slack-team-select)))
+    (slack-channel-list-update-archived
+     team
+     #'(lambda (team)
+         (slack-if-let* ((rooms (slack-channel-archived team))
+                         (alist (slack-room-names rooms team))
+                         (room (slack-select-from-list
+                                   (alist "Select archived channel: "))))
+             (slack-room-display room team)
+           (slack-log "No archived channel found" team :level 'info))))))
+
 (cl-defmethod slack-buffer-display-im ((this slack-user-profile-buffer))
   "Display THIS profile IM message."
   (let* ((user-id (oref this user-id))

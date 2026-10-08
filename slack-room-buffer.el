@@ -39,6 +39,7 @@
 (require 'slack-message-share-buffer)
 (require 'slack-reminder)
 (require 'slack-bot-message)
+(require 'slack-conversations)
 (require 'slack-star)
 
 (defvar slack-completing-read-function)
@@ -368,39 +369,46 @@ Optionally pass SUCCESS-CALLBACK to perform an action on the permalink obtained.
   (interactive)
   (slack-buffer-copy-link slack-current-buffer (slack-get-ts) success-callback))
 
+(defun slack-permalink-team (info)
+  "The team the permalink INFO belongs to.
+The domain in the link is matched first.  An enterprise grid link
+carries the organization domain, =<organization>.enterprise.slack.com=,
+which no workspace domain matches, so the team that knows the room is
+tried next, then the only registered team, and finally the user is
+asked."
+  (let* ((teams (hash-table-values slack-teams-by-token))
+         (room-id (plist-get info :room-id)))
+    (or (slack-team-find-by-domain (plist-get info :team-domain))
+        (--find (slack-room-find room-id it) teams)
+        (if (= 1 (length teams))
+            (car teams)
+          (slack-team-select)))))
+
 (defun slack-open-url (url)
-  "Open a slack URL (permalink) in emacs-slack."
+  "Open a slack URL (permalink) in emacs-slack.
+A message permalink lands on its message; a room-level link, one without
+the /p<timestamp> part, opens the room.  Rooms emacs-slack does not know,
+archived channels among them, are fetched before being opened."
   (interactive
    (list (cond ((url-p (car kill-ring)) (car kill-ring))
                ((thing-at-point 'url) (thing-at-point 'url))
                (t (read-string "Enter slack url:")))))
-  (if-let* ((info (slack-permalink-to-info url))
-            (team-domain (plist-get info :team-domain))
-            (team (slack-team-find-by-domain team-domain))
-            (room-id (plist-get info :room-id))
-            (room (or
-                   (--> team
-                        slack-team-ims
-                        (--find (equal room-id (oref it id)) it))
-                   (--> team
-                        slack-team-channels
-                        (--find (equal room-id (oref it id)) it))
-                   ))
-            (ts (plist-get info :ts))
-            (thread-ts (plist-get info :thread-ts)))
-      (slack-open-message
-       team
-       room
-       ts
-       thread-ts)
-    (error (format "Not an url: %s" url))
-    ))
+  (slack-if-let* ((info (slack-permalink-to-info url))
+                  (room-id (plist-get info :room-id))
+                  (team (slack-permalink-team info)))
+      (slack-room-find-or-fetch
+       room-id team
+       #'(lambda (room)
+           (slack-if-let* ((ts (plist-get info :ts)))
+               (slack-open-message team room ts (plist-get info :thread-ts))
+             (slack-room-display room team))))
+    (error (format "Not an url: %s" url))))
 
 (defalias 'slack-open-link 'slack-open-url  "Open a Slack permalink in emacs-slack.")
 
 (defconst slack-open-url-regexp
-  "^https://\\(.*\\)\\.slack\\.com/\\(?:[^/]+/\\)?archives/[^/?]+/p[0-9]+"
-  "Regexp matching a Slack message permalink.
+  "^https://\\(.*\\)\\.slack\\.com/\\(?:[^/]+/\\)?archives/[^/?#]+\\(?:/p[0-9]+\\)?"
+  "Regexp matching a Slack permalink, message-level or room-level.
 Subexpression 1 is the team domain.  A URL matching this regexp can be
 handed to `slack-open-url'.")
 

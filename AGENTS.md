@@ -75,6 +75,15 @@ should add **no new** warnings, not eliminate the old ones.
   refactor before adding more unrelated functionality.
 - Split tests by functionality into dedicated `test/*-test.el` files; load each
   file from `test/run-test.el` so the standard suite still covers everything.
+- **No real workspace data in tracked files.** This repository is public, so
+  tests, docstrings, comments and changelog entries must use neutral
+  placeholders, never anything copied from a live session: use
+  `test-team.slack.com`, `example-org.enterprise.slack.com`, ids shaped like
+  `T99999` / `C99999` / `U11111`, and invented channel names and message text.
+  A bug report that quotes a real permalink, channel id, workspace domain or
+  message is fine in the conversation; rewrite it to a placeholder before it
+  reaches a file. Debugging output from a live Emacs stays out of the repo
+  (`.agent-shell/` is git-ignored for that reason).
 - **Versioning & changelog:** bump the `Version:` header in `slack.el` and
   `emacs-slack.el` for any release-worthy batch of changes. Update
   `CHANGELOG.org` with Added / Changed / Fixed / Obsolete sections under the

@@ -71,21 +71,8 @@ room is not loaded.  The browser always can."
                          :store #'slack-org-store-link
                          :complete #'slack-org-complete-link)
 
-(defconst slack-org--permalink-regexp
-  "^https://\\([^./]+\\)\\.slack\\.com/archives/\\([^/?]+\\)"
-  "Regexp matching team domain and room id in a Slack permalink.")
-
-(defun slack-org--permalink-to-info (permalink)
-  "Like `slack-permalink-to-info', but room-level permalinks work too.
-A room-level permalink has no /p<timestamp> part and produces info
-with a nil :ts."
-  (if (string-match-p "/p[0-9]" permalink)
-      (slack-permalink-to-info permalink)
-    (when (string-match slack-org--permalink-regexp permalink)
-      (list :team-domain (match-string 1 permalink)
-            :room-id (match-string 2 permalink)
-            :ts nil
-            :thread-ts nil))))
+(defalias 'slack-org--permalink-to-info 'slack-permalink-to-info
+  "Turn a Slack permalink into info; room-level permalinks give a nil :ts.")
 
 (defun slack-org--old-format-to-info (link)
   "Convert LINK of the form TEAMID[&|]ROOMID[&|]ts:TS to permalink info.

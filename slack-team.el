@@ -173,7 +173,7 @@ Populated by `slack-vip-list-update', the `users.priority.add'/
 (defun slack-team-find-by-domain (team-domain)
   "Go from TEAM-DOMAIN to team."
   (--find
-   (equal team-domain (oref it domain))
+   (equal team-domain (slack-team-domain it))
    (hash-table-values slack-teams-by-token)))
 
 (defun slack-team-domain (team)

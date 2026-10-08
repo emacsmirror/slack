@@ -291,9 +291,11 @@
                       (cons "user" (plist-get user :id)))
         :success (slack-conversations-success-handler team))))))
 
-(defun slack-conversations-list (team success-callback &optional types)
+(defun slack-conversations-list (team success-callback &optional types include-archived)
   "Retrieve the list of conversations for TEAM.
-Run SUCCESS-CALLBACK on success. Also limit to conversation TYPES when provided."
+Run SUCCESS-CALLBACK on success. Also limit to conversation TYPES when provided.
+With INCLUDE-ARCHIVED, archived channels are listed too, whatever
+`slack-exclude-archived-channels' says."
   (let ((cursor nil)
         (channels nil)
         (groups nil)
@@ -353,7 +355,9 @@ Run SUCCESS-CALLBACK on success. Also limit to conversation TYPES when provided.
              slack-conversations-list-url
              team
              :params (list (cons "types" (mapconcat #'identity types ","))
-                           (and slack-exclude-archived-channels (cons "exclude_archived" "true"))
+                           (and slack-exclude-archived-channels
+                                (not include-archived)
+                                (cons "exclude_archived" "true"))
                            (and cursor (cons "cursor" cursor))
                            (cons "limit" "999"))
              :success #'on-success))))
@@ -398,6 +402,20 @@ it does a call for each type and `slack-conversation-list' doesn't do more than 
 (defun slack-conversations-info (channel-id team &optional after-success)
   (slack-request
    (slack-conversations-info-request channel-id team after-success)))
+
+(defun slack-room-find-or-fetch (room-id team callback)
+  "Call CALLBACK with the room ROOM-ID of TEAM, fetching it when unknown.
+A channel that is archived, or that we never joined, is not part of the
+room list emacs-slack keeps (see `slack-exclude-archived-channels'), but
+conversations.info still knows it, so one is fetched before giving up."
+  (slack-if-let* ((room (slack-room-find room-id team)))
+      (funcall callback room)
+    (slack-conversations-info
+     room-id team
+     #'(lambda ()
+         (slack-if-let* ((room (slack-room-find room-id team)))
+             (funcall callback room)
+           (error "Could not find room %s in %s" room-id (oref team name)))))))
 
 (defun slack-conversations-info-request (channel-id team &optional after-success)
   (cl-labels

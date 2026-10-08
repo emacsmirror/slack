@@ -7,6 +7,19 @@ All notable changes to this project will be documented in this file.
 
 ** Fixed
 
+- ~slack-open-url~ opens links it used to refuse.  A link naming a room
+  rather than a message (no =/p<timestamp>= part) now opens the room;
+  ~slack-permalink-to-info~ parses it with a nil =:ts= and returns nil
+  for anything that is not a Slack link, instead of reading whatever the
+  previous match left behind.  An enterprise grid link, whose host is
+  =<organization>.enterprise.slack.com=, no longer fails the workspace
+  lookup: ~slack-permalink-team~ falls back to the team that knows the
+  room, then to the only registered team, and asks only when it has to.
+  A room emacs-slack has not loaded, an archived channel for instance,
+  is fetched with conversations.info (~slack-room-find-or-fetch~) rather
+  than reported as not found.  Clicking a channel link in a message now
+  opens it in emacs-slack too.  ~slack-org-link.el~ shares the one
+  parser instead of keeping a second, stricter regexp.
 - Message links and buttons whose URL is a Slack permalink (mrkdwn and
   rich-text links, Block Kit buttons, legacy attachment buttons, e.g. the
   ~Request~ link some bots post) open in emacs-slack instead of the system
@@ -28,6 +41,15 @@ All notable changes to this project will be documented in this file.
 
 ** Added
 
+- ~slack-channel-select-archived~ lists a team's archived channels and
+  opens the selected one.  Archived channels count as hidden rooms, so
+  the regular selection leaves them out, and they are not part of the
+  room list emacs-slack keeps (see ~slack-exclude-archived-channels~):
+  the command fetches them first, with
+  ~slack-channel-list-update-archived~, and they stay available for the
+  session afterwards.  ~slack-conversations-list~ takes an
+  =include-archived= argument for this, applied to every page of the
+  listing.
 - Starred (saved for later) messages are highlighted in message, thread
   and search buffers with the new ~slack-starred-message-face~, a pale
   amber wash (light and dark variants) applied on top of the existing
