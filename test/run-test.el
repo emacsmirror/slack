@@ -626,6 +626,44 @@ text property and a keymap so it can be clicked to open a profile."
                                "\n")
                        text)))))
 
+(ert-deftest slack-test-rich-text-list-offset ()
+  ;; Slack continues the numbering of ordered lists split by nested
+  ;; content through the list's "offset" attribute.
+  (let* ((payload (list :type "rich_text"
+                        :elements (list
+                                   (list :type "rich_text_section"
+                                         :elements (list (list :type "text" :text "intro\n")))
+                                   (list :type "rich_text_list"
+                                         :elements (list (list :type "rich_text_section"
+                                                               :elements (list (list :type "text"
+                                                                                     :text "first item"))))
+                                         :style "ordered"
+                                         :indent 0)
+                                   (list :type "rich_text_list"
+                                         :elements (list (list :type "rich_text_section"
+                                                               :elements (list (list :type "text"
+                                                                                     :text "sub one"))))
+                                         :style "bullet"
+                                         :indent 1)
+                                   (list :type "rich_text_list"
+                                         :elements (list (list :type "rich_text_section"
+                                                               :elements (list (list :type "text"
+                                                                                     :text "second item"))))
+                                         :style "ordered"
+                                         :indent 0
+                                         :offset 1))))
+         (block (slack-create-rich-text-block payload)))
+    (should (string= (concat "intro\n"
+                             "1. first item\n"
+                             (format "  %s sub one\n" slack-mrkdwn-list-bullet)
+                             "2. second item\n")
+                     (slack-block-to-string block)))
+    (should (string= (concat "intro\n"
+                             "1. first item\n"
+                             "  - sub one\n"
+                             "2. second item\n")
+                     (slack-block-to-mrkdwn block)))))
+
 (ert-deftest slack-test-rich-text-text-element ()
   (let ((payload '(:type "text" :text "Hello this is rich text")))
     (should (string= "Hello this is rich text" (slack-block-to-string
@@ -924,6 +962,37 @@ https://api.slack.com/changelog/2019-09-what-they-see-is-what-you-get-and-more-a
                            (plist-get (cl-find-if #'(lambda (el) (string= "link" (plist-get el :type)))
                                                   elements)
                                       :url))))))))
+
+(ert-deftest slack-test-create-blocks-ordered-list-offset ()
+  ;; Nested content between ordered items splits them into separate
+  ;; rich_text_list blocks; the numbering the user typed is preserved
+  ;; through the "offset" attribute, so Slack renders "2." and not a
+  ;; second "1.".
+  (let* ((str (string-trim "
+intro line
+1. first item
+  - sub one
+  - sub two
+2. second item
+trailing line
+"))
+         (blocks (slack-test-parse-blocks str)))
+    (should (not (null blocks)))
+    (let ((block (car blocks)))
+      (should (string= "rich_text" (plist-get block :type)))
+      (let ((elements (plist-get block :elements)))
+        (should (eq 5 (length elements)))
+        (let ((first-list (nth 1 elements))
+              (sub-list (nth 2 elements))
+              (second-list (nth 3 elements)))
+          (should (string= "rich_text_list" (plist-get first-list :type)))
+          (should (string= "ordered" (plist-get first-list :style)))
+          (should (null (plist-get first-list :offset)))
+          (should (string= "bullet" (plist-get sub-list :style)))
+          (should (eq 1 (plist-get sub-list :indent)))
+          (should (string= "rich_text_list" (plist-get second-list :type)))
+          (should (string= "ordered" (plist-get second-list :style)))
+          (should (eq 1 (plist-get second-list :offset))))))))
 
 (ert-deftest slack-test-block-to-mrkdwn ()
   (let* ((payload (list :type "rich_text_preformatted"

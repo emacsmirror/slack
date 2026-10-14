@@ -320,12 +320,19 @@ In this context an indentation level is a pair of spaces."
                                  (string= "*" list-sign))
                              "bullet"
                            "ordered"))
-             (list-indent (slack-list-indent-level (match-string 1))))
+             (list-indent (slack-list-indent-level (match-string 1)))
+             ;; Nested content between ordered items splits them into
+             ;; separate rich_text_list blocks; Slack continues their
+             ;; numbering through the "offset" attribute, so remember
+             ;; which number the user typed.
+             (list-offset (and (string= list-style "ordered")
+                               (1- (string-to-number list-sign)))))
         (slack-put-section-block-props (match-beginning 0)
                                        (match-end 0)
                                        (list :section-type 'list
                                              :style list-style
                                              :indent list-indent
+                                             :list-offset list-offset
                                              :element-beg (match-beginning 4)
                                              :element-end (match-end 4)))))))
 
@@ -459,6 +466,7 @@ In this context an indentation level is a pair of spaces."
                          (blockquote-ranges nil)
                          (list-style nil)
                          (list-indent nil)
+                         (list-offset nil)
                          (list-ranges nil))
                     (cl-labels ((commit-block (type block-elements &rest props)
                                   (when (< 0 (length block-elements))
@@ -486,16 +494,23 @@ In this context an indentation level is a pair of spaces."
                                                        blockquote-ranges))
                                     (setq blockquote-ranges nil)))
                                 (commit-list-block ()
-                                  (when (commit-block "rich_text_list"
-                                                      (cl-mapcan #'(lambda (range)
-                                                                     (create-section-elements-from-ranges
-                                                                      (list range)))
-                                                                 (reverse list-ranges))
-                                                      (cons "style" list-style)
-                                                      (cons "indent" list-indent))
-                                    (setq list-ranges nil)
-                                    (setq list-style nil)
-                                    (setq list-indent nil))))
+                                  (when (< 0 (length list-ranges))
+                                    (let ((e (list (cons "type" "rich_text_list")
+                                                   (cons "elements"
+                                                         (cl-mapcan #'(lambda (range)
+                                                                        (create-section-elements-from-ranges
+                                                                         (list range)))
+                                                                    (reverse list-ranges)))
+                                                   (cons "style" list-style)
+                                                   (cons "indent" list-indent))))
+                                      (when (and (string= list-style "ordered")
+                                                 (< 0 list-offset))
+                                        (push (cons "offset" list-offset) e))
+                                      (push e elements)
+                                      (setq list-ranges nil)
+                                      (setq list-style nil)
+                                      (setq list-indent nil)
+                                      (setq list-offset nil)))))
                       (while (and cur-point (< cur-point end))
                         (let* ((block-props (get-text-property cur-point 'slack-section-block-props))
                                (section-type (and block-props (plist-get block-props :section-type)))
@@ -534,7 +549,10 @@ In this context an indentation level is a pair of spaces."
                                                 (plist-get block-props :element-end))
                                           list-ranges)
                                     (setq list-style (plist-get block-props :style))
-                                    (setq list-indent (plist-get block-props :indent)))
+                                    (setq list-indent (plist-get block-props :indent))
+                                    (when (= 1 (length list-ranges))
+                                      (setq list-offset (or (plist-get block-props :list-offset)
+                                                            0))))
                                   ;; Skip newline
                                   (setq end (1+ end)))
                             (t (progn

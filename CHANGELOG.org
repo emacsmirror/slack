@@ -7,6 +7,15 @@ All notable changes to this project will be documented in this file.
 
 ** Fixed
 
+- Numbered lists render as "1." again for every item instead of
+  continuing "1., 2., ...".  When nested content (say a sub-bullet list)
+  interrupts an ordered list, Slack serializes the items after it as a
+  separate =rich_text_list= whose =offset= attribute carries the
+  numbering; emacs-slack ignored that attribute and numbered each list
+  from one.  Rendering and mrkdwn conversion now start the counter at
+  the offset, and messages you write with numbered bullets emit the
+  same offset (taken from the number you typed), so the recipients see
+  "2." where you typed "2.".
 - ~slack-open-url~ opens links it used to refuse.  A link naming a room
   rather than a message (no =/p<timestamp>= part) now opens the room;
   ~slack-permalink-to-info~ parses it with a nil =:ts= and returns nil
