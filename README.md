@@ -173,6 +173,9 @@ Some terminology in the `slack-` functions:
     `C-g` they insert the character. Buffers using `company-slack-backend`
     keep typing them literally. Set `slack-message-embed-on-typing` to nil
     to always type them literally.
+- `slack-emoji-dwim`
+  - select an emoji and use it where the cursor is: as a reaction to the
+    message at point, or inserted in the text you are typing
 - `slack-file-upload`
   - attach a file to the current message draft; it uploads when you send
 - thread sync suggestion: when a thread exceeds

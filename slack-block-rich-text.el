@@ -195,13 +195,20 @@
    (style :initarg :style :type string) ;; bullet or ordered
    ))
 
+(defun slack-rich-text-list-offset (list)
+  "Numbering offset of LIST, 0 when absent.
+Ordered lists split by nested content continue their numbering
+through the payload's \"offset\" attribute: Slack renders item i
+as i + offset."
+  (or (plist-get (oref list payload) :offset) 0))
+
 (cl-defmethod slack-block-to-string ((this slack-rich-text-list) &optional option)
   (let ((indent (make-string (* 2 (oref this indent)) ? ))
         (texts (mapcar #'(lambda (element) (slack-block-to-string element option))
                        (oref this elements)))
         (texts-with-dot nil)
         (dot slack-mrkdwn-list-bullet)
-        (i 1))
+        (i (1+ (slack-rich-text-list-offset this))))
     (dolist (text texts)
       (push (format "%s%s %s"
                     indent
@@ -218,7 +225,7 @@
 (cl-defmethod slack-block-to-mrkdwn ((this slack-rich-text-list) &optional option)
   (let* ((indent (make-string (* 2 (oref this indent)) ? ))
          (dot "-")
-         (i 1))
+         (i (1+ (slack-rich-text-list-offset this))))
     (concat (mapconcat #'(lambda (element)
                            (let ((text (format "%s%s %s"
                                                indent
