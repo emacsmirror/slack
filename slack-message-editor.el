@@ -43,6 +43,8 @@
   (let ((keymap (make-sparse-keymap)))
     (define-key keymap (kbd "C-s C-m") #'slack-message-embed-mention)
     (define-key keymap (kbd "C-s C-c") #'slack-message-embed-channel)
+    (define-key keymap (kbd "@") #'slack-message-embed-mention)
+    (define-key keymap (kbd "#") #'slack-message-embed-channel)
     (define-key keymap (kbd "C-c C-k") #'slack-message-cancel-edit)
     (define-key keymap (kbd "C-c C-c") #'slack-message-send-from-buffer)
     keymap))

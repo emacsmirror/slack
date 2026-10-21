@@ -136,6 +136,11 @@
   (cursor-sensor-mode)
   (setq-local lui-max-buffer-size nil))
 
+;; Typing "@" or "#" at the start of a word opens the mention picker;
+;; see `slack-message-embed-on-typing'.
+(define-key slack-message-buffer-mode-map (kbd "@") #'slack-message-embed-mention)
+(define-key slack-message-buffer-mode-map (kbd "#") #'slack-message-embed-channel)
+
 (defclass slack-message-buffer (slack-room-buffer)
   ((oldest :initform nil :type (or null string))
    (latest :initform nil :type (or null string))

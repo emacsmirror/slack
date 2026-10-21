@@ -34,13 +34,8 @@ If your token expires, you can use `slack-refresh-token` for a way to refresh in
          ("C-c S G" . slack-conversations-list-update-quick)
          ("C-c S q" . slack-quote-and-reply)
          ("C-c S Q" . slack-quote-and-reply-with-link)
-         (:map slack-mode-map
-               (("@" . slack-message-embed-mention)
-                ("#" . slack-message-embed-channel)))
          (:map slack-thread-message-buffer-mode-map
-               (("C-c '" . slack-message-write-another-buffer)
-                ("@" . slack-message-embed-mention)
-                ("#" . slack-message-embed-channel)))
+               (("C-c '" . slack-message-write-another-buffer)))
          (:map slack-message-buffer-mode-map
                (("C-c '" . slack-message-write-another-buffer)))
          (:map slack-message-compose-buffer-mode-map
@@ -170,9 +165,14 @@ Some terminology in the `slack-` functions:
 - `slack-channel-list-update`
   - update channel list
 - `slack-message-embed-mention`
-  - use to mention to user
+  - use to mention to user; bound to `@` in message, thread and edit buffers
 - `slack-message-embed-channel`
-  - use to mention to channel
+  - use to mention to channel; bound to `#` in message, thread and edit buffers
+  - `@` / `#` open the picker only at the start of a word; inside a word
+    (`c#`, an email address), with `C-u`, or when the list is quit with
+    `C-g` they insert the character. Buffers using `company-slack-backend`
+    keep typing them literally. Set `slack-message-embed-on-typing` to nil
+    to always type them literally.
 - `slack-emoji-dwim`
   - select an emoji and use it where the cursor is: as a reaction to the
     message at point, or inserted in the text you are typing

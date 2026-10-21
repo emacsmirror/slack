@@ -40,6 +40,11 @@
   (cursor-sensor-mode)
   (setq lui-input-function 'slack-thread-message--send))
 
+;; Typing "@" or "#" at the start of a word opens the mention picker;
+;; see `slack-message-embed-on-typing'.
+(define-key slack-thread-message-buffer-mode-map (kbd "@") #'slack-message-embed-mention)
+(define-key slack-thread-message-buffer-mode-map (kbd "#") #'slack-message-embed-channel)
+
 (defclass slack-thread-message-buffer (slack-room-buffer)
   ((thread-ts :initarg :thread-ts :type string)
    (has-more :initarg :has-more :type boolean)

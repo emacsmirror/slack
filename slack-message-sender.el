@@ -26,6 +26,7 @@
 
 (require 'eieio)
 (require 'json)
+(require 'dash)
 (require 'slack-util)
 (require 'slack-room)
 (require 'slack-im)
@@ -144,8 +145,78 @@ In this context an indentation level is a pair of spaces."
           (slack-im-names team)
           (slack-channel-names team)))
 
-(defun slack-message-embed-channel ()
-  (interactive)
+(defvar lui-input-marker)
+(defvar company-backends)
+
+(defcustom slack-message-embed-on-typing t
+  "When non-nil, typing \"@\" or \"#\" in a message opens the mention picker.
+The picker only opens at the start of a word; see
+`slack-message-embed-literal-p'.  Buffers completing mentions with
+`company-slack-backend' keep typing them literally.  Set this to nil
+to always insert the characters literally, including where you bound
+\"@\" or \"#\" to the embed commands yourself.  The picker is still
+available via \\`C-s C-m' and \\`C-s C-c'."
+  :type 'boolean
+  :group 'slack)
+
+(defun slack-message-embed--input-start ()
+  "Return the start of the lui input area, or nil outside lui buffers."
+  (and (markerp lui-input-marker)
+       (marker-position lui-input-marker)))
+
+(defun slack-message-embed--company-p ()
+  "Return non-nil when `company-slack-backend' completes mentions here.
+Typing \"@\" or \"#\" then has to insert the character so that the
+company popup can complete it."
+  (and (bound-and-true-p company-mode)
+       (boundp 'company-backends)
+       (--any (or (eq it 'company-slack-backend)
+                  (and (consp it) (memq 'company-slack-backend it)))
+              company-backends)))
+
+(defun slack-message-embed-literal-p (char arg)
+  "Return non-nil when typing CHAR should insert it instead of embedding.
+That is the case when the command was invoked by typing CHAR itself
+and either a prefix ARG was given, `slack-message-embed-on-typing' is
+nil, `company-slack-backend' is completing mentions, point is in the
+read-only history before the input area, or point directly follows a
+non-whitespace character, e.g. the \"#\" in \"c#\" or the \"@\" in an
+email address.  This keeps \"#\" and \"@\" usable as plain text when
+they are bound to the embed commands."
+  (let ((input-start (slack-message-embed--input-start)))
+    (and (eq last-command-event char)
+         (or arg
+             (not slack-message-embed-on-typing)
+             (slack-message-embed--company-p)
+             (and input-start (< (point) input-start))
+             ;; At the start of the input the char before point belongs
+             ;; to the prompt, which need not end in a space.
+             (and (char-before)
+                  (not (eql (point) input-start))
+                  (not (string-match-p "[[:space:](\"'`]"
+                                       (string (char-before)))))))))
+
+(defun slack-message-embed--pick (char picker)
+  "Run PICKER, inserting CHAR instead if it is quit with \\`C-g'.
+Only when the command was invoked by typing CHAR, so quitting
+\\`C-s C-m' still inserts nothing."
+  (if (eq last-command-event char)
+      (condition-case nil
+          (funcall picker)
+        (quit (insert (string char))))
+    (funcall picker)))
+
+(defun slack-message-embed-channel (&optional arg)
+  "Insert a channel mention chosen from a list.
+When bound to \"#\", insert a literal \"#\" instead with a prefix ARG
+or when point directly follows a non-whitespace character, and when
+the list is quit with \\`C-g'."
+  (interactive "P")
+  (if (slack-message-embed-literal-p ?# arg)
+      (insert "#")
+    (slack-message-embed--pick ?# #'slack-message--embed-channel)))
+
+(defun slack-message--embed-channel ()
   (slack-if-let* ((buf slack-current-buffer)
                   (team (slack-buffer-team buf)))
       (slack-select-from-list
@@ -173,8 +244,17 @@ In this context an indentation level is a pair of spaces."
                                          display
                                          (format "<!%s>" keyword))))
 
-(defun slack-message-embed-mention ()
-  (interactive)
+(defun slack-message-embed-mention (&optional arg)
+  "Insert a user, user group or keyword mention chosen from a list.
+When bound to \"@\", insert a literal \"@\" instead with a prefix ARG
+or when point directly follows a non-whitespace character, and when
+the list is quit with \\`C-g'."
+  (interactive "P")
+  (if (slack-message-embed-literal-p ?@ arg)
+      (insert "@")
+    (slack-message-embed--pick ?@ #'slack-message--embed-mention)))
+
+(defun slack-message--embed-mention ()
   (slack-if-let* ((buf slack-current-buffer)
                   (team (slack-buffer-team buf)))
       (let* ((keyworkds (list (list "here" :name "here" :type 'keyword)

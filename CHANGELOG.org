@@ -80,6 +80,15 @@ All notable changes to this project will be documented in this file.
 
 ** Changed
 
+- Typing =@= or =#= in a room, thread or edit buffer opens the mention
+  picker by default; users no longer need to bind the keys themselves.
+  The picker only opens at the start of a word: inside a word (=c#=, an
+  email address), with =C-u=, or in the read-only history the character
+  is inserted, and quitting the picker with =C-g= keeps it.  Buffers
+  completing mentions with ~company-slack-backend~ keep typing them
+  literally.  The new ~slack-message-embed-on-typing~ turns the picker
+  off for typed =@= and =#= altogether.
+
 - Starring or unstarring a message now logs the outcome at info level
   (~Successfully starred message.~ / ~Successfully unstarred message.~)
   once the API confirms it, so the change is not silent: the message's
