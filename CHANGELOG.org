@@ -7,6 +7,13 @@ All notable changes to this project will be documented in this file.
 
 ** Fixed
 
+- Room events from the websocket apply again: read markers
+  (=channel_marked=, =group_marked=, =im_marked=), channels created,
+  renamed, archived, unarchived or deleted, and members joining or
+  leaving.  Their ~slack-event-save-room~ methods take a callback
+  argument, which the synchronous ~slack-event-update~ did not pass, so
+  each such event failed with =wrong-number-of-arguments= and unread
+  counts and channel names went stale.
 - Numbered lists render as "1." again for every item instead of
   continuing "1., 2., ...".  When nested content (say a sub-bullet list)
   interrupts an ordered list, Slack serializes the items after it as a
