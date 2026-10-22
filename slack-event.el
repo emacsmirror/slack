@@ -57,11 +57,11 @@
 
 (defclass slack-room-event-processable () () :abstract t)
 (cl-defmethod slack-event-find-room ((_this slack-room-event-processable) _team))
-(cl-defmethod slack-event-save-room ((_this slack-room-event-processable) _room _team))
+(cl-defmethod slack-event-save-room ((_this slack-room-event-processable) _room _team &optional _cb))
 (cl-defmethod slack-event-update ((this slack-room-event-processable) team)
   (let ((room (slack-event-find-room this team)))
     (when room
-      (slack-event-save-room this room team)
+      (slack-event-save-room this room team nil)
       (slack-event-update-ui this room team))))
 
 (provide 'slack-event)
